@@ -41,9 +41,7 @@ for my $f (<users_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{users}};
 	printf "Loading %d users from %s\n",0+@$data,$f;
 	for my $u (@$data) {
-		$USERS{$u->{id}} = {
-			_ => $u, # raw data for returning
-		};
+		$USERS{$u->{id}} = { _ => $u };
 		++$count;
 	}
 }
@@ -187,17 +185,17 @@ my $srv = AnyEvent::HTTP::Server->new(
 								# change user
 							}
 
-							for (qw(visited_at mark)) {
-								if (exists $v->{$_}) {
-									$vis->{$_}{}
-									if ($v->{$_} == $vis->{$_}) {
-										delete $v->{$_};
-									}
-									else {
-										say "= $vis->{$_}  => $v->{$_}";
-									}
-								}
-							}
+							# for (qw(visited_at mark)) {
+							# 	if (exists $v->{$_}) {
+							# 		$vis->{$_}{}
+							# 		if ($v->{$_} == $vis->{$_}) {
+							# 			delete $v->{$_};
+							# 		}
+							# 		else {
+							# 			say "= $vis->{$_}  => $v->{$_}";
+							# 		}
+							# 	}
+							# }
 							return $req->reply(200,'{}') unless %$v;
 							return $req->reply(501,'{}');
 

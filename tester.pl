@@ -14,8 +14,8 @@ use HTTP::Easy::Headers;
 
 our $JSON = JSON::XS->new->utf8;
 
-# my $phase = 'phase_1_get';
-my $phase = 'phase_2_post';
+my $phase = 'phase_1_get';
+# my $phase = 'phase_2_post';
 
 open my $f, '<:raw', "hlcupdocs/answers/${phase}.answ" or die "$phase.answ: $!";
 open my $ammo, '<:raw', "hlcupdocs/ammo/${phase}.ammo" or die "$phase.ammo: $!";
