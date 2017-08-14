@@ -41,7 +41,7 @@ for my $f (<users_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{users}};
 	printf "Loading %d users from %s\n",0+@$data,$f;
 	for my $u (@$data) {
-		$USERS{$u->{id}} = { _ => $u };
+		$USERS{$u->{id}} = $u;
 		++$count;
 	}
 }
@@ -72,25 +72,18 @@ for my $f (<visits_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{visits}};
 	printf "Loading %d visits from %s\n",0+@$data,$f;
 	for my $v (@$data) {
-		# p $v;
 		my $loc = $LOCATIONS{$v->{location}};
-		# p $loc;
 		my $usr = $USERS{$v->{user}};
-		# p $usr;
-
 		$VISITS{$v->{id}} = $v;
-		push @{ $loc->{visits} }, {
-			visited_at => $v->{visited_at},
-			birth_date => $usr->{_}{birth_date},
-			gender     => $usr->{_}{gender},
-			_ => $v,
+		my $uvl = {
+			user => $usr,
+			visit => $v,
+			location => $loc,
 		};
-		push @{ $usr->{visits} }, {
-			visited_at => $v->{visited_at},
-			country => $loc->{country},
-			distance => $loc->{distance},
-			_ => $v,
-		};
+
+		push @{ $USER_VISITS{ $v->{user} } },         $uvl;
+		push @{ $LOCATION_VISITS{ $v->{location} } }, $uvl;
+
 		++$count;
 	}
 }
@@ -98,26 +91,13 @@ printf "Loaded %d visits in %0.4fs\n", $count, time-$start;
 
 my $start = time;
 my $max = 0;
-for my $loc (values %LOCATIONS) {
-	$loc->{visits} //= [];
-	@{ $loc->{visits} } = sort {
-		$a->{visited_at} <=> $b->{visited_at}
-	} @{ $loc->{visits} };
-	$max = max($max,0+@{ $loc->{visits} });
+for my $visits (values %LOCATION_VISITS, values %USER_VISITS) {
+	@$visits = sort {
+		$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
+	} @$visits;
+	$max = max($max,0+@$visits);
 }
-printf "Sorted %d visits in %0.4fs, locations/max: %s\n", $count, time-$start, $max;
-
-my $start = time;
-my $max = 0;
-for my $loc (values %USERS) {
-	$loc->{visits} //= [];
-	@{ $loc->{visits} } = sort {
-		$a->{visited_at} <=> $b->{visited_at}
-	} @{ $loc->{visits} };
-	$max = max($max,0+@{ $loc->{visits} });
-}
-printf "Sorted %d visits in %0.4fs, users/max: %s\n", $count, time-$start, $max;
-
+printf "Sorted %d visits in %0.4fs, max: %s\n", $count, time-$start, $max;
 
 use lib glob("libs/*/lib"),glob("libs/*/blib/lib"),glob("libs/*/blib/arch");
 
@@ -242,57 +222,51 @@ my $srv = AnyEvent::HTTP::Server->new(
 				}
 			};
 		}
+		return 400, '{}' unless $req->method eq 'GET';
+
 		if ($path =~ m{^/users/(\d+)(/visits|)$}) {
 			my $user = $USERS{$1}
 				or return 404,'{}';
 			unless ($2) {
-				return 200, $JSON->encode($user->{_});
+				return 200, $JSON->encode($user);
 			}
 			else {
 				my $prm = $req->params;
 				my @cond;
 				if (exists $prm->{fromDate}) {
 					return 400,'{}' unless $prm->{fromDate} =~ /^\d+$/;
-					push @cond, "\$_->{visited_at} >= $prm->{fromDate}";
+					push @cond, "\$_->{visit}{visited_at} >= $prm->{fromDate}";
 				}
 				if (exists $prm->{toDate}) {
 					return 400,'{}' unless $prm->{toDate} =~ /^\d+$/;
-					push @cond, "\$_->{visited_at} <= $prm->{toDate}";
+					push @cond, "\$_->{visit}{visited_at} <= $prm->{toDate}";
 				}
 				if (exists $prm->{country}) {
 					my $country = $COUNTRIES{ fc $prm->{country} };
 					return 400,'{"error":"Bad country"}' unless $country;
-					push @cond, "\$_->{country} == $country->{id}";
+					push @cond, "\$_->{location}{country} == $country->{id}";
 				}
 				if (exists $prm->{toDistance}) {
-					my $country = $COUNTRIES{ $prm->{country} };
 					return 400,'{}' unless $prm->{toDistance} =~ /^\d+$/;
-					push @cond, "\$_->{distance} < $prm->{toDistance}";
+					push @cond, "\$_->{location}{distance} < $prm->{toDistance}";
 				}
+
+				$USER_VISITS{ $user->{id} }
+					or return 200, $JSON->encode({visits => []});
 
 				my @visits;
-
+				my $filter;
 				if (@cond) {
 					my $body = 'sub{'.join(' and ', @cond).'}';
-					say $body;
-					my $sub = eval $body or die $@;
-					for(grep &$sub, @{ $user->{visits} } ) {
-						push @visits, {
-							mark => $_->{_}{mark},
-							visited_at => $_->{_}{visited_at},
-							place => $LOCATIONS{$_->{_}{location}}{place},
-						};
-					}
+					# say $body;
+					$filter = eval $body or die $@;
 				}
-				else {
-					# p $user->{visits};
-					for ( @{ $user->{visits} } ) {
-						push @visits, {
-							mark => $_->{_}{mark},
-							visited_at => $_->{_}{visited_at},
-							place => $LOCATIONS{$_->{_}{location}}{place},
-						};
-					}
+				for($filter ? grep &$filter, @{ $USER_VISITS{ $user->{id} } } : @{ $USER_VISITS{ $user->{id} } } ) {
+					push @visits, {
+						mark => $_->{visit}{mark},
+						visited_at => $_->{visit}{visited_at},
+						place => $_->{location}{place},
+					};
 				}
 				return 200, $JSON->encode({
 					visits => \@visits,
@@ -302,7 +276,7 @@ my $srv = AnyEvent::HTTP::Server->new(
 		elsif ($path =~ m{^/locations/(\d+)(/avg|)$}) {
 			my $loc = $LOCATIONS{$1}
 				or return 404,'{}';
-			say "Location $1 + ".(0+@{ $loc->{visits} });
+			# say "Location $1 + ".(0+@{ $loc->{visits} });
 
 			unless ($2) {
 				# p $loc;
@@ -324,44 +298,40 @@ my $srv = AnyEvent::HTTP::Server->new(
 				my @cond;
 				if (exists $prm->{fromDate}) {
 					return 400,'{}' unless $prm->{fromDate} =~ /^\d+$/;
-					push @cond, "\$_->{visited_at} >= $prm->{fromDate}";
+					push @cond, "\$_->{visit}{visited_at} >= $prm->{fromDate}";
 				}
 				if (exists $prm->{toDate}) {
 					return 400,'{}' unless $prm->{toDate} =~ /^\d+$/;
-					push @cond, "\$_->{visited_at} <= $prm->{toDate}";
+					push @cond, "\$_->{visit}{visited_at} <= $prm->{toDate}";
 				}
 
 				if (exists $prm->{fromAge}) {
 					return 400,'{}' unless $prm->{fromAge} =~ /^\d+$/;
 					my $older = $now->minus_years( $prm->{fromAge} )->epoch;
-					push @cond, "\$_->{birth_date} <= $older";
+					push @cond, "\$_->{user}{birth_date} <= $older";
 				}
 				if (exists $prm->{toAge}) {
 					return 400,'{}' unless $prm->{toAge} =~ /^\d+$/;
 					my $younger = $now->minus_years( $prm->{toAge} )->epoch;
-					push @cond, "\$_->{birth_date} > $younger";
+					push @cond, "\$_->{user}{birth_date} > $younger";
 				}
 				if (exists $prm->{gender}) {
 					return 400,'{}' unless $prm->{gender} =~ /^(f|m)$/;
-					push @cond, "\$_->{gender} eq '$prm->{gender}'";
+					push @cond, "\$_->{user}{gender} eq '$prm->{gender}'";
 				}
+				$LOCATION_VISITS{ $loc->{id} }
+					or return 200, $JSON->encode({ avg => 0 });
+
 				my $sum = 0;
 				my $cnt = 0;
+				my $filter;
 				if (@cond) {
 					my $body = 'sub{'.join(' and ', @cond).'}';
-					# say $body;
-					my $sub = eval $body or die $@;
-					for ( grep &$sub, @{ $loc->{visits} } ) {
-						# p $_;
-						$sum += $_->{_}{mark};
-						$cnt++;
-					}
+					$filter = eval $body or die $@;
 				}
-				else {
-					for ( @{ $loc->{visits} } ) {
-						$sum += $_->{_}{mark};
-						$cnt++;
-					}
+				for ( $filter ? grep &$filter, @{ $LOCATION_VISITS{ $loc->{id} } } : @{ $LOCATION_VISITS{ $loc->{id} } } ) {
+					$sum += $_->{visit}{mark};
+					$cnt++;
 				}
 				return 200, $JSON->encode({
 					avg => $cnt && (int($sum/$cnt*1e5+0.5)/1e5) || 0,
