@@ -1,6 +1,7 @@
 #!/urs/bin/env perl
 
 use 5.016;
+use open qw (:utf8 :std);
 use AE;
 use EV;
 use AnyEvent::HTTP;
@@ -10,12 +11,20 @@ use Test::More;
 use JSON::XS;
 use lib glob("libs/*/lib"),glob("libs/*/blib/lib"),glob("libs/*/blib/arch");
 use HTTP::Easy::Headers;
-
+use Time::Moment;
+use Encode qw(decode);
+use Test::Deep;
 
 our $JSON = JSON::XS->new->utf8;
 
-my $phase = 'phase_1_get';
+my $ph = $ARGV[0] or 2;
+my $phase = [
+	qw(phase_1_get phase_2_post phase_3_get)
+]->[$ph-1] or die;
+# my $phase = 'phase_1_get';
 # my $phase = 'phase_2_post';
+# my $phase = 'phase_3_get';
+
 
 open my $f, '<:raw', "hlcupdocs/answers/${phase}.answ" or die "$phase.answ: $!";
 open my $ammo, '<:raw', "hlcupdocs/ammo/${phase}.ammo" or die "$phase.ammo: $!";
@@ -49,6 +58,19 @@ my $next_bullet = sub {
 	# p $body;
 };
 
+sub dump_user_visits {
+	my $name = shift;
+	my $av = shift;
+	say "--- $name ".(0+@$av);
+	for (@$av) {
+		printf "\t@%s\t%20s\t%s\n",
+			Time::Moment->from_epoch($_->{visited_at}),
+			$_->{place},
+			$_->{mark},
+	}
+}
+
+
 my $cv = AE::cv;$cv->begin;
 my $test;$test = sub {
 	my $rec = <$f>
@@ -58,12 +80,18 @@ my $test;$test = sub {
 		or return;
 
 
+
 	# p $rec;
 	my ($met,$path,$st,$body) = split /\t/,$rec;
 	# p $am;
 	$am->{path_query} eq $path or die "Mismatch";
 	# $test->();
 
+	# return $test->() unless $path =~ m{^/location};
+	# if ($ph == 2) {
+	# 	return $test->()
+	# 		if $path !~ m{^/visit} or $JSON->decode($am->{body})->{user} != 166;
+	# }
 
 	# exit;
 	# say $path;
@@ -80,7 +108,9 @@ my $test;$test = sub {
 				my $ok = 0;
 				$ok += is $_[1]{Status},$st, "$met $path $st";
 				if ($body) {
-					$ok += is_deeply
+					# p $JSON->decode($_[0]);
+					# p $JSON->decode($body);
+					$ok += cmp_deeply
 						$JSON->decode($_[0]),
 						$JSON->decode($body),
 						"$met $path body";
@@ -91,7 +121,14 @@ my $test;$test = sub {
 
 				unless ($ok == 2) {
 					diag $_[1]{Status};
-					diag $_[0];
+					diag decode utf8 => $_[0];
+					my $jd = $JSON->decode($body);
+					if ($jd->{visits}) {
+						dump_user_visits "expected", $jd->{visits};
+						dump_user_visits "received", $JSON->decode($_[0])->{visits};
+					}
+					
+
 					return $cv->end;
 				}
 			}
@@ -106,9 +143,6 @@ my $test;$test = sub {
 			$cv->end;
 		}
 	;
-
-		
-
 };$test->();
 $cv->cb(sub { EV::unloop; });
 $cv->end;
