@@ -18,7 +18,8 @@ use Time::HiRes 'time';
 
 our $JSON = JSON::XS->new->utf8;
 
-my $ph = $ARGV[0] or 2;
+my $source = $ARGV[0] or 'TRAIN';
+my $ph = $ARGV[1] or 2;
 my $phase = [
 	qw(phase_1_get phase_2_post phase_3_get)
 ]->[$ph-1] or die;
@@ -27,8 +28,8 @@ my $phase = [
 # my $phase = 'phase_3_get';
 
 
-open my $f, '<:raw', "hlcupdocs/answers/${phase}.answ" or die "$phase.answ: $!";
-open my $ammo, '<:raw', "hlcupdocs/ammo/${phase}.ammo" or die "$phase.ammo: $!";
+open my $f, '<:raw', "hlcupdocs/data/$source/answers/${phase}.answ" or die "$phase.answ: $!";
+open my $ammo, '<:raw', "hlcupdocs/data/$source/ammo/${phase}.ammo" or die "$phase.ammo: $!";
 
 my $next_bullet = sub {
 	my $am = <$ammo>
