@@ -10,7 +10,7 @@ use Time::HiRes qw(time);
 use List::Util qw(max);
 use Getopt::Long;
 my $port;
-my $debug;
+my $debug = 0;
 BEGIN {
 	$port = 80;
 	GetOptions(
@@ -50,25 +50,25 @@ if (DEBUG) {
 	$DST = "hlcupdocs/data";
 }
 else {
-	system("unzip -o /tmp/data/data.zip -d $DST/")
-		== 0 or die "Failed to unpack: $?";	
+	system("unzip -o /tmp/data/data.zip -d $DST/ 2>/dev/null")
+		== 0 or die "Failed to unpack: $?";
 }
 
 my $start = time; my $count = 0;
 for my $f (<$DST/users_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{users}};
-	printf "Loading %d users from %s\n",0+@$data,$f;
+	# warn sprintf "Loading %d users from %s\n",0+@$data,$f;
 	for my $u (@$data) {
 		$USERS{$u->{id}} = $u;
 		++$count;
 	}
 }
-printf "Loaded %d users in %0.4fs\n", $count, time-$start;
+warn sprintf "Loaded %d users in %0.4fs\n", $count, time-$start;
 
 my $start = time; my $count = 0;
 for my $f (<$DST/locations_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{locations}};
-	printf "Loading %d locations from %s\n",0+@$data,$f;
+	# warn sprintf "Loading %d locations from %s\n",0+@$data,$f;
 	for my $l (@$data) {
 		# p $l unless %COUNTRIES;
 		my $cnkey = fc($l->{country});
@@ -83,12 +83,12 @@ for my $f (<$DST/locations_*.json>) {
 	}
 }
 # p %COUNTRIES;
-printf "Loaded %d locations in %0.4fs, found %d countries\n", $count, time-$start, 0+keys %COUNTRIES;
+warn sprintf "Loaded %d locations in %0.4fs, found %d countries\n", $count, time-$start, 0+keys %COUNTRIES;
 
 my $start = time; my $count = 0;
 for my $f (<$DST/visits_*.json>) {
 	my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{visits}};
-	printf "Loading %d visits from %s\n",0+@$data,$f;
+	# warn sprintf "Loading %d visits from %s\n",0+@$data,$f;
 	for my $v (@$data) {
 		my $loc = $LOCATIONS{$v->{location}};
 		my $usr = $USERS{$v->{user}};
@@ -105,7 +105,7 @@ for my $f (<$DST/visits_*.json>) {
 		++$count;
 	}
 }
-printf "Loaded %d visits in %0.4fs\n", $count, time-$start;
+warn sprintf "Loaded %d visits in %0.4fs\n", $count, time-$start;
 
 my $start = time;
 my $max = 0;
@@ -115,7 +115,7 @@ for my $visits (values %LOCATION_VISITS, values %USER_VISITS) {
 	} @$visits;
 	$max = max($max,0+@$visits);
 }
-printf "Sorted %d visits in %0.4fs, max: %s\n", $count, time-$start, $max;
+warn sprintf "Sorted %d visits in %0.4fs, max: %s\n", $count, time-$start, $max;
 
 use lib glob("libs/*/lib"),glob("libs/*/blib/lib"),glob("libs/*/blib/arch");
 
@@ -161,6 +161,7 @@ my $srv = AnyEvent::HTTP::Server->new(
 
 			my $buf;
 			return sub {
+				# p @_;
 				unless (defined $buf) {
 					$buf = $_[1];
 				}
@@ -169,9 +170,10 @@ my $srv = AnyEvent::HTTP::Server->new(
 				}
 				if ($_[0]) {
 					my $data = eval { $JSON->decode( $$buf ) };
+					# p $buf;
 					$data and ref $data eq 'HASH'
-						or return $req->reply(400, '{}');
-						# or do { warn $$buf, $@; return $req->reply(400, '{}'); };
+						or return $req->reply(400, '{"error":"bad json"}');
+						# or do { warn $$buf, $@; return $req->reply(400, '{"error":"bad json"}'); };
 
 					# p $data;
 					if ($path =~ m{^/users/(?:(\d+)|(new))$}) {
@@ -234,8 +236,6 @@ my $srv = AnyEvent::HTTP::Server->new(
 						return $req->reply(200,'{}');
 					}
 					elsif($path =~ m{^/locations/(?:(\d+)|(new))$}) {
-						# my $cond = ($1 == 370) || ($2 && $data->{id} == 370);
-						# p $data if DEBUG && $cond;
 						my $loc;
 						if ($1) {
 							$loc = $LOCATIONS{$1} or return $req->reply(404,'{}');
@@ -294,18 +294,17 @@ my $srv = AnyEvent::HTTP::Server->new(
 					elsif($path =~ m{^/visits/(?:(\d+)|(new))$}) {
 
 						my $v = $data;
-						# my $cond =
-						# 	($v->{user} && $v->{user} == 166)
-						# 	|| ($v->{location} && $v->{location} == 370)
-						# if DEBUG;
+						my $cond = 0
+						if DEBUG;
 
-						# p $path if $cond;
-						# p $data if $cond;
+						if (DEBUG and $cond) {
+							p $path;
+							p $data;
+						}
 
 						if ($1) { # update
 							my $vis = $VISITS{$1}
 								or return $req->reply(404,'{}');
-							# p $vis if $cond;
 
 							if (exists $v->{mark}) {
 								$v->{mark} =~ /^[0-5]$/
@@ -323,6 +322,7 @@ my $srv = AnyEvent::HTTP::Server->new(
 							}
 
 							if (exists $v->{location} and $vis->{location} != $v->{location}) {
+								warn "Move loc $vis->{location} -> $v->{location}" if DEBUG and $cond;
 
 								my $loc = $LOCATIONS{$v->{location}}
 									or return $req->reply(400,'{"error":"bad location"}');
@@ -333,6 +333,8 @@ my $srv = AnyEvent::HTTP::Server->new(
 
 								my $old = $LOCATION_VISITS{ $vis->{location} };
 								my $new = $LOCATION_VISITS{ $v->{location} } //= [];
+
+								dump_visits "Before", $old if DEBUG and $cond;
 								$vis->{location} = $v->{location};
 								# warn sprintf "update location %d -> %d",0+@$old, 0+@$new if ($cond);
 								my $ptr;
@@ -344,6 +346,9 @@ my $srv = AnyEvent::HTTP::Server->new(
 										last;
 									}
 								}
+								dump_visits "After", $old if DEBUG and $cond;
+
+								dump_visits "Before", $new if DEBUG and $cond;
 								my $pos;
 								for ($pos = 0; $pos < @$new; $pos++ ) {
 									if ( $new->[$pos]{visit}{visited_at} > $vis->{visited_at} ) {
@@ -353,10 +358,16 @@ my $srv = AnyEvent::HTTP::Server->new(
 								}
 								splice @$new,$pos, 0, $ptr;
 								# warn "insert $ptr to $pos -> @{[ 0+@$new ]}" if $cond;
+								dump_visits "After", $new if DEBUG and $cond;
+
+								$ptr->{location} = $loc;
+
+								p $ptr if DEBUG and $cond;
+
 							}
 
 							if (exists $v->{user} and $vis->{user} != $v->{user}) {
-								my $loc = $USERS{$v->{user}}
+								my $user = $USERS{$v->{user}}
 									or return $req->reply(400,'{"error":"bad user"}');
 								$resort_usr = 0;
 								
@@ -381,6 +392,7 @@ my $srv = AnyEvent::HTTP::Server->new(
 								}
 								# warn "insert $ptr to $pos";
 								splice @$new,$pos, 0, $ptr;
+								$ptr->{user} = $user;
 							}
 
 							if ($resort_usr) {
@@ -596,20 +608,34 @@ my $srv = AnyEvent::HTTP::Server->new(
 		}
 	}
 );
-say "Listen ",join ':', $srv->listen;
+warn "Listen ",join (':', $srv->listen), "\n";
 $srv->accept;
 
 sub stop {
-	say "Leaving";
-	say $JSON->encode(\%STAT);
+	warn "END: ".$JSON->encode(\%STAT)."\n";
 	$srv->graceful(sub {});
 	EV::unloop;
 }
 
+my $dog = AE::timer 0,(DEBUG ? 1 : 10),sub {
+	# my $t = clock_gettime(CLOCK_CPUTIME_ID);
+	my ($vsize,$rss) = (0,0);
+	eval {
+		my $stat = do { open my $f,'<:raw',"/proc/$$/stat" or die $!; local $/; <$f> };
+		($vsize,$rss) = $stat =~ m{ ^ \d+ \s+ \(.+?\) \s+ [RSDZTW] \s+ (?:\S+\s+){19} (\S+) \s+ (\S+) \s+}xs;
+	};
+
+	my $now = time;
+	warn sprintf "My times: %0.4f/%+0.3f : %0.4fs+%0.4fs : %0.2fM/%0.2fM : %s\n",
+		$now, $now-AE::now, (times)[0,1],
+		$rss/(1024*1024/4096), $vsize/(1024*1024),
+		$JSON->encode(\%STAT);
+};
 my $i = EV::signal INT => \&stop;
 my $t = EV::signal TERM => \&stop;
 
 EV::loop;
+exit 0;
 
 
 __END__

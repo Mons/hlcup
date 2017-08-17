@@ -18,8 +18,12 @@ COPY logtime.sh /etc/my_init.d/logtime.sh
 RUN chmod +x /etc/my_init.d/logtime.sh
 
 RUN apt-get install -y libev-perl libanyevent-perl libjson-xs-perl unzip git make cmake cpanminus libdata-printer-perl
+RUN apt-get install -y libr3-dev
 
-RUN cpanm -n Digest::SHA1 Time::Moment
+RUN cpanm -vn Digest::SHA1
+RUN cpanm -vn Time::Moment
+RUN cpanm -vn URI::XSEscape
+RUN cpanm -vn Router::R3
 
 RUN mkdir -p /tmp/unpacked
 
@@ -29,6 +33,8 @@ RUN cd /usr/src && git clone https://github.com/Mons/HTTP-Easy.git && cd HTTP-Ea
 
 COPY server.pl /etc/my_init.d/99-hlcupserver
 RUN chmod +x /etc/my_init.d/99-hlcupserver
+
+RUN perl -c /etc/my_init.d/99-hlcupserver
 
 # Clean up APT when done.
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

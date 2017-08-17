@@ -14,6 +14,7 @@ use HTTP::Easy::Headers;
 use Time::Moment;
 use Encode qw(decode);
 use Test::Deep;
+use Time::HiRes 'time';
 
 our $JSON = JSON::XS->new->utf8;
 
@@ -63,14 +64,16 @@ sub dump_user_visits {
 	my $av = shift;
 	say "--- $name ".(0+@$av);
 	for (@$av) {
-		printf "\t@%s\t%20s\t%s\n",
+		printf "%s\t\t@%s\t%20s\t%s\n",
+			$_->{id},
 			Time::Moment->from_epoch($_->{visited_at}),
 			$_->{place},
 			$_->{mark},
 	}
 }
 
-
+my $start = time;
+my $count = 0;
 my $cv = AE::cv;$cv->begin;
 my $test;$test = sub {
 	my $rec = <$f>
@@ -78,7 +81,7 @@ my $test;$test = sub {
 	chomp $rec;
 	my $am = $next_bullet->()
 		or return;
-
+	++$count;
 
 
 	# p $rec;
@@ -101,8 +104,8 @@ my $test;$test = sub {
 	$cv->begin;
 	http_request
 		$met => $u,
-		headers => { %{ $am->{headers} }, connection => 'close'},
-		body => $am->{body},
+		headers => { %{ $am->{headers} }, connection => 'close', 'content-length' => length $am->{body}},
+		body => $am->{body} && $am->{body}."\015\012",
 		sub {
 			if ($st == 200) {
 				my $ok = 0;
@@ -148,6 +151,8 @@ $cv->cb(sub { EV::unloop; });
 $cv->end;
 
 EV::loop;
+done_testing;
+warn sprintf "Processed %d requests in %0.2fs: %0.4fRPS\n", $count, time- $start, $count/(time-$start);
 
 # while (<$f>) {
 # 	my @x = split /\t/,$_;
