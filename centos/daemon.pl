@@ -1,82 +1,25 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 
 use utf8;
 # use open qw(:utf8 :std);
 use 5.016;
 use JSON::XS;
 use DDP;
-use Time::HiRes qw(time);
+use Time::HiRes qw(time sleep);
+use POSIX qw(WNOHANG);
 use List::Util qw(min max);
 use Getopt::Long qw(:config bundling gnu_compat);
 use AE;
-use lib glob("libs/*/lib"),glob("libs/*/blib/lib"),glob("libs/*/blib/arch");
+use AnyEvent::Util;
+use lib glob("../libs/*/lib"),glob("../libs/*/blib/lib"),glob("../libs/*/blib/arch");
 use Time::Moment;
-my $PID = $$;
-my $CONNS = my $REQS = 0;
+use EV;
+use Errno;
+use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY);
+use Router::R3;
+use URI::XSEscape 'uri_unescape';
 
-my $log;
-pipe my $logr,my $logw or die "pipe: $!";
-if (fork) {
-	close $logr;
-	AnyEvent::Util::fh_nonblocking($logw,1);
-	$SIG{__WARN__} = sub {
-		my $now = Time::Moment->now;
-		syswrite $logw, sprintf("[%s] %s", $now->strftime("%H:%M:%S%3f"),@_);
-	};
-}
-else {
-	close $logw;
-	while (<$logr>) {
-		print STDERR $_;
-		# CORE::warn $_;
-	}
-	exit;
-}
-
-if (-e "/proc/$PID/stat") {
-	if (fork) {}
-	else {
-		while (kill 0 => getppid()) {
-			my ($tcp, $sched, $schedstat, $statm, $stat);
-			{
-				if( open my $f, '<:raw','/proc/net/sockstat') {
-					my ($use) = scalar(<$f>) =~ /used (\d+)/;
-					chomp($tcp = "$use:".<$f>);
-				}
-			}
-			{
-				if( open my $f, '<:raw',"/proc/$PID/sched") {
-					local $/;
-					my $s = <$f>;
-					while ($s =~ m{^\s*(\S+)\s*:\s*(\S+)\s*$}smg) {
-						$sched .= "$1:$2 ";
-					}
-				}
-			}
-			{
-				if( open my $f, '<:raw',"/proc/$PID/schedstat") {
-					chomp($schedstat = <$f>);
-				}
-			}
-			{
-				if( open my $f, '<:raw',"/proc/$PID/statm") {
-					chomp($statm = <$f>);
-				}
-			}
-			{
-				if( open my $f, '<:raw',"/proc/$PID/stat") {
-					chomp($stat = <$f>);
-				}
-			}
-			warn "$stat|$statm|$tcp|$sched|$schedstat\n";
-			sleep 5	;
-		}
-		warn "No more parent: $!\n";
-		exit;
-	}
-}
-
-
+##################################################
 my $port;
 my $debug;
 my $src;
@@ -94,26 +37,115 @@ our $JSON = JSON::XS->new->utf8;
 our $JSONN = JSON::XS->new->utf8->allow_nonref;
 
 system("ulimit -n 200000");
-# system("sysctl net.ipv4.tcp_fin_timeout=0");
 system("sysctl net.ipv4.tcp_tw_reuse=1");
 system("sysctl net.ipv4.tcp_slow_start_after_idle=0");
 
-use EV;
-use Errno;
-use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY);
 BEGIN {
-	eval { Socket->import('TCP_FASTOPEN');1}
-		or warn "No TCP_FASTOPEN\n";
-	eval { Socket->import('TCP_QUICKACK');1}
-		or warn "No TCP_QUICKACK\n";
-	eval { Socket->import('TCP_LINGER2');1}
-		or warn "No TCP_LINGER2\n";
-	if (-e '/proc/sys/net/ipv4/tcp_fastopen') {
-		system('echo 3 > /proc/sys/net/ipv4/tcp_fastopen');
+	eval { Socket->import('TCP_QUICKACK');1} or warn "No TCP_QUICKACK\n";
+	eval { Socket->import('TCP_LINGER2');1}  or warn "No TCP_LINGER2\n";
+}
+our $DST = '/tmp/unpacked';
+if (DEBUG) {
+	$DST = "hlcupdocs/data/$src/data";
+}
+else {
+	my $start = time;
+	system("unzip -o /tmp/data/data.zip -d $DST/ >/dev/null 2>/dev/null")
+		== 0 or die "Failed to unpack: $?";
+	warn sprintf "Unpacked archive in %0.4fs\n", time - $start;
+}
+##################################################
+
+sub aefor($$$$;$);
+
+my @targets = qw(logger worker heater monitor);
+my %chld;
+END{ kill KILL => $_ for keys %chld };
+my $logger;
+
+my $log;
+pipe my $logr,my $logw or die "pipe: $!";
+
+for my $target (@targets) {
+	defined(my $pid = fork) or die "$!";
+	if ($pid) {
+		if ($target eq 'logger') {
+			close $logr;
+			AnyEvent::Util::fh_nonblocking($logw,1);
+			$SIG{__WARN__} = sub {
+				my $now = Time::Moment->now;
+				syswrite $logw, sprintf("[%s][%s] %s", $now->strftime("%H:%M:%S%3f"),$$,@_);
+			};
+			$logger = $pid;
+		}
+		else {
+			$chld{$pid} = $target;
+		}
+		warn "Spawned $pid as $target\n";
+	}
+	else {
+		%chld = ();
+		$SIG{INT} = 'IGNORE';
+		$0 = $target;
+		no strict 'refs';
+		$target->();
+		exit;
 	}
 }
-use Router::R3;
-use URI::XSEscape 'uri_unescape';
+
+my $working = 1;
+sub terminus {
+	# delete $SIG{__WARN__};
+	warn "killing";
+	kill TERM => $_ for keys %chld;
+	$working = 0;
+}
+
+$SIG{CHLD} = sub {
+	while ((my $child = waitpid(-1,WNOHANG)) > 0) {
+		my ($exitcode, $signal, $core) = ($? >> 8, $? & 127, $? & 128);
+		unless(kill 0 => $child) {
+			warn "Child $child gone: $exitcode\n";
+			delete $chld{$child};
+		}
+	}
+};
+
+$SIG{TERM} = \&terminus;
+$SIG{INT}  = \&terminus;
+$SIG{QUIT} = \&terminus;
+
+while ($working) {sleep 0.1;}
+my $wait = 10;
+while ($wait-- > 0 and %chld ) {sleep 0.1;}
+kill TERM => $logger;
+warn "gone all ($wait)\n";
+exit;
+
+sub logger {
+	close $logw;
+	while (<$logr>) { print STDERR $_;}
+	exit;
+}
+
+sub monitor {
+	warn "I'm monitor";
+	my $work = 1;
+	$SIG{TERM} = sub {$work = 0};
+	while ($work) { sleep 1; }
+}
+
+sub heater {
+	warn "I'm heater";
+	sleep 3;
+	warn "Do work...";
+	exit;
+}
+
+sub worker {
+	goto WORKER;
+}
+WORKER:
 
 sub aefor($$$$;$) {
 	my $fin = pop;
@@ -155,10 +187,8 @@ our @COUNTRY_ID;
 $#COUNTRY_ID = 200;
 our @LOCATIONS;
 $#LOCATIONS = 110000;
-
 our @VISITS;
 $#VISITS = 1100000;
-
 our @USER_VISITS;
 $#USER_VISITS = 110000;
 our @LOCATION_VISITS;
@@ -175,23 +205,12 @@ sub get_country($) {
 }
 
 
-our $DST = '/tmp/unpacked';
-
-if (DEBUG) {
-	$DST = "hlcupdocs/data/$src/data";
-}
-else {
-	my $start = time;
-	system("unzip -o /tmp/data/data.zip -d $DST/ >/dev/null 2>/dev/null")
-		== 0 or die "Failed to unpack: $?";
-	warn sprintf "Unpacked archive in %0.4fs\n", time - $start;
-}
-
 our $NOW;
-
+################ Loading DATA
 {
+	my ($start,$count);
 	warn "Loading DATA from $DST\n";
-	my $start = time; my $count = 0;
+	$start = time; $count = 0;
 	for my $f (<$DST/users_*.json>) {
 		$NOW //= (stat($f))[9];
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{users}};
@@ -203,7 +222,7 @@ our $NOW;
 	}
 	warn sprintf "Loaded %d users in %0.4fs\n", $count, time-$start;
 
-	my $start = time; my $count = 0;
+	$start = time; $count = 0;
 	for my $f (<$DST/locations_*.json>) {
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{locations}};
 		# warn sprintf "Loading %d locations from %s\n",0+@$data,$f;
@@ -217,7 +236,7 @@ our $NOW;
 	# p %COUNTRIES;
 	warn sprintf "Loaded %d locations in %0.4fs, found %d countries\n", $count, time-$start, 0+keys %COUNTRIES;
 
-	my $start = time; my $count = 0;
+	$start = time; $count = 0;
 	for my $f (<$DST/visits_*.json>) {
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{visits}};
 		# warn sprintf "Loading %d visits from %s\n",0+@$data,$f;
@@ -239,7 +258,7 @@ our $NOW;
 	}
 	warn sprintf "Loaded %d visits in %0.4fs\n", $count, time-$start;
 
-	my $start = time;
+	$start = time;
 	my $max1 = 0;
 	my $id1;
 	for my $visits (@LOCATION_VISITS) {
@@ -268,6 +287,7 @@ our $NOW;
 	$NOW //= time;
 }
 $NOW = Time::Moment->from_epoch($NOW);
+################ Loaded DATA
 
 sub get_user {
 	my ($res,$id,$q) = @_;
@@ -755,6 +775,8 @@ sub mystat {
             $JSON->encode(\%STAT);
 }
 
+my $CONNS = my $REQS = 0;
+
 my $g;$g = EV::timer 0,10, sub {
 	if ($prev == $cnt) {
 		# warn "Same";
@@ -775,17 +797,6 @@ my $g;$g = EV::timer 0,10, sub {
 		$last_ac = 'grow';
 	}
 };
-
-# my $m;$m = EV::timer 0,5, sub {
-# 	my $in = time;
-# 	my $stat;
-# 	if( open my $f, '<:raw','/proc/self/stat' ) {
-# 		chomp ($stat = <$f>);
-# 	}
-
-# 	$in = time - $in;
-# 	# warn sprintf "<%s:%s> {%s} (%0.6fs)\n", $CONNS, $REQS, $stat, $in;
-# };
 
 tcp_server 0, $port, sub {
 	my $fh = shift;
@@ -920,5 +931,17 @@ tcp_server 0, $port, sub {
 	1024
 };
 
+my $s = EV::signal TERM => sub {
+	warn "Stop";
+	EV::unloop;
+};
 EV::loop;
-exit 0;
+exit;
+
+
+
+
+
+
+
+
