@@ -272,7 +272,7 @@ void get_user(SV *, int id)
 			ST(0) = rv;
 			XSRETURN(1);
 		} else {
-			warn("No user for %d",id);
+			//warn("No user for %d",id);
 			XSRETURN_UNDEF;
 		}
 
@@ -365,6 +365,7 @@ void add_visit(SV *, int id, int user, int location, int mark, int visited_at )
 		vis->user = user;
 		vis->mark = mark;
 		vis->visited_at = visited_at;
+		
 		Location *loc = (*self->locations)[location];
 		User *usr = (*self->users)[user];
 		// warn("loc=%p, user=%p",loc,usr);
@@ -383,35 +384,18 @@ void add_visit(SV *, int id, int user, int location, int mark, int visited_at )
 		else{
 			croak("XXX: No user or location");
 		}
-		/*
-		SV **key;
-		std::map<int,VisitSet*> *vs;
-		key = hv_fetch(self->UserVisits,(char *)&user,sizeof(int),0);
-		if (key) {
-			vs = (std::map<int,VisitSet*> *) SvIV( *key );
-			warn("Found: %p", vs);
-		}
-		else {
-			vs = new std::map<int,VisitSet*>;
-			warn("Created: %p", vs);
-			(void)hv_store(self->UserVisits, (char *)&user,sizeof(int), newSViv(PTR2IV( vs )), 0);
-		}
-
-		VisitSet * cur = (VisitSet *) safemalloc(sizeof(VisitSet));
-
-		cur->visit = vis;
-
-		for (std::multimap<int, VisitSet*>::iterator it = (*vs).begin(); it != (*vs).end(); ++it) {
-			warn("item: %d; -> vis:%p: %d",(*it).first, (*it).second->visit, (*it).second->visit->id);
-		}
-
-		vs->insert(std::pair< int,VisitSet* >(vis->visited_at, cur));
-
-		for (std::multimap<int, VisitSet*>::iterator it = (*vs).begin(); it != (*vs).end(); ++it) {
-			warn("item: %d; -> vis:%p: %d",(*it).first, (*it).second->visit, (*it).second->visit->id);
-		}
-		*/
 		XSRETURN_UNDEF;
+
+void exists_visit(SV *, int id)
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		std::map<int, Visit*>::iterator it = (*self->visits).find(id);
+		if ( it != (*self->visits).end() ) {
+			ST(0) = &PL_sv_yes;
+			XSRETURN(1);
+		} else {
+			XSRETURN_UNDEF;
+		}
 
 void get_visit(SV *, int id)
 	PPCODE:
@@ -464,7 +448,7 @@ void get_location_avg(SV *, int id, int from, int till, int from_age, int till_a
 			it = loc->visits.begin();
 		}
 
-		warn("%d < visited_at < %d; %d < age < %d (%c)", from, till, from_age, till_age, gender);
+		//warn("%d < visited_at < %d; %d < age < %d (%c)", from, till, from_age, till_age, gender);
 		int sum = 0;
 		int cnt = 0;
 
@@ -507,10 +491,7 @@ void get_user_visits(SV *, int id, int from, int till, int country, int distance
 			XSRETURN_UNDEF;
 			return;
 		}
-
-		// User *usr = (*self->users)[id]; // TODO: find
-		// if (!usr) XSRETURN_UNDEF;
-
+		
 		std::multimap<int, VisitSet*>::iterator it;
 		if (from) {
 			it = usr->visits.lower_bound(from);
@@ -518,50 +499,36 @@ void get_user_visits(SV *, int id, int from, int till, int country, int distance
 		else {
 			it = usr->visits.begin();
 		}
-
-		warn("user_visits: %d < visited_at < %d; country: %d, distance: %d for <%s>", from, till, country, distance, SvPVX(usr->email));
-
+		
+		//warn("user_visits: %d < visited_at < %d; country: %d, distance: %d for <%s>", from, till, country, distance, SvPVX(usr->email));
+		
 		SV *rv = sv_2mortal(newSV(1024));
-		// sv_dump((SV*)0x7fecd9a21c08);
-		warn("rv = %p", rv);
 		SvUPGRADE( rv, SVt_PV );
-		warn("upgrade ok");
 		SvPOKp_on(rv);
-		char *p = SvPVX(rv);
-		warn("pv = %p + %d",p, SvLEN(rv));
-		mycpy(p,"{\"visits\":[\n");
-		warn("pv = %p",p);
+		sv_catpv(rv,"{\"visits\":[\n");
 		bool first = true;
-
-		warn("call loop %p",&usr->visits);
+		
 		for (; it != usr->visits.end(); ++it) {
-			warn("XXX %d ~~ %d (%d)",(*it).second->visit->visited_at, till, (*it).second->user->birth_date);
+			//warn("XXX: Date: %d < %d < %d (%d) [%d~%d] (%s)",from, (*it).second->visit->visited_at, till, (*it).second->user->birth_date, (*it).second->location->distance, distance, SvPVX((*it).second->location->place));
 			if ( (*it).second->visit->visited_at > till ) break;
-
 			if ( country && (*it).second->location->country != country ) continue;
-			if ( distance && (*it).second->location->distance > distance ) continue;
+			if ( distance && (*it).second->location->distance >= distance ) continue;
 			Visit *vis = (*it).second->visit;
 			Location *loc = (*it).second->location;
-
-			// warn("item: %d; -> loc: %d",(*it).first, (*it).second->visit->location);
 			if (!first) {
-				mycpy(p,",\n\t{\"mark\":");
+				sv_catpv(rv,",\n\t{\"mark\":");
 			}
 			else {
-				mycpy(p,"\t{\"mark\":");
+				sv_catpv(rv,"\t{\"mark\":");
 				first = false;
 			}
-			p += snprintf(p, 14, "%d", vis->mark);
-			mycpy(p,",\"visited_at\":");
-			p += snprintf(p, 14, "%d", vis->visited_at);
-			mycpy(p,",\"place\":\"");
-			memcpy( p, SvPVX(loc->place),SvCUR(loc->place) );
-			p+=SvCUR(loc->place);
-			mycpy(p,"\"}");
-
+			sv_catpvf(rv, "%d", vis->mark);
+			sv_catpvf(rv, ",\"visited_at\":%d",vis->visited_at);
+			sv_catpv(rv,",\"place\":\"");
+			sv_catpvn(rv, SvPVX(loc->place),SvCUR(loc->place));
+			sv_catpv(rv,"\"}");
 		}
-		mycpy(p,"\n]}\n");
-		SvCUR_set(rv,p - SvPVX(rv));
+		sv_catpv(rv,"\n]}\n");
 		ST(0) = rv;
 		XSRETURN(1);
 

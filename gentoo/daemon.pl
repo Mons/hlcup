@@ -393,7 +393,8 @@ sub update_location {
 
 sub update_visit {
 	my ($res,$id,$prm,$data) = @_;
-	return $res->(404,'{}');
+	return $res->(404,'{}') unless $db->exists_visit($id);
+	return $res->(501,'{}')
 	# my $vis = $VISITS[$id] or return $res->(404,'{}');
 
 	# $data->{mark} =~ /^[0-5]$/

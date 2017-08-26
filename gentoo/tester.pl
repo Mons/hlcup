@@ -111,12 +111,14 @@ my $test;$test = sub {
 				my $ok = 0;
 				$ok += is $_[1]{Status},$st, "$met $path $st";
 				if ($body) {
+					# p $_[0];
 					# p $JSON->decode($_[0]);
 					# p $JSON->decode($body);
 					$ok += cmp_deeply
 						$JSON->decode($_[0]),
 						$JSON->decode($body),
-						"$met $path body";
+						"$met $path body"
+						or diag $body;
 				}
 				else {
 					$ok += like $body, qr{^(|\{\})$},"$met $path body";
