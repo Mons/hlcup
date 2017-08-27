@@ -7,7 +7,6 @@ extern "C" {
 #include "perl.h"
 #include "XSUB.h"
 #include "ppport.h"
-// #include "rb_tree.h"
 #ifdef __cplusplus
 }
 #endif
@@ -36,13 +35,10 @@ typedef struct User {
 	std::map<int,VisitSet *> visits; // visited_at + VS
 } User;
 
-// typedef std::map<int, User> mapUser;
-
 typedef struct Country {
 	int id;
 	SV * name;
 } Country;
-// typedef std::map<int, Country> mapCountry;
 
 typedef struct Location {
 	int id;
@@ -53,7 +49,6 @@ typedef struct Location {
 
 	std::multimap<int,VisitSet *> visits; // visited_at + VS
 } Location;
-// typedef std::map<int, Location> mapLocation;
 
 typedef struct Visit {
 	int id;
@@ -62,25 +57,6 @@ typedef struct Visit {
 	int visited_at;
 	int mark;
 } Visit;
-
-// typedef std::map<int, Location> mapVisit;
-
-
-
-int vs_cmp (const void * a, const void * b) {
-   return ( *(int*)a - *(int*)b );
-}
-
-/*
-	User(id)->
-		list of visits
-*/
-// sorted by visited_at
-// visited_at is not unique
-
-// typedef std::map<int, std::list<VisitSet> > mapUserVisits;
-// typedef std::map<int, std::list<VisitSet> > mapLocationVisits;
-
 
 typedef struct HLCup {
 	std::map<int,User *> *users;
@@ -92,77 +68,17 @@ typedef struct HLCup {
 	int country_max;
 } HLCup;
 
-// class HLCup {
-// 	public:
-// 		std::map<int,User *> users;
-// 		std::map<int,Location *> locations;
-// 		std::map<int,Visit *> visits;
-// 		std::map<int,std::string> country_id;
-// 		std::map<std::string,int> countries;
-// 		int country_max;
-
-// };
-
-int intcmp (const void * a, const void * b) {
-   return ( *(int*)a - *(int*)b );
-}
-
-
-// class HLCup {
-// 	private:
-// 		// std::auto_ptr< std::map<int,User> > users;
-// 		mapUser users;
-// 	public:
-// 		HLCup () {
-// 			warn("create obj");
-// 		};
-// 		~HLCup () {
-// 			warn("destroy obj");
-// 		};
-// 		void add_user (int id, SV * email, SV * first_name, SV * last_name, char gender, int birth_date) {
-// 			warn("add_user %d %c %d (%s %s %s)",id, gender, birth_date, SvPVX(email), SvPVX(first_name), SvPVX(last_name));
-// 			SvREFCNT_inc(email);
-// 			User u = {.id = id, .birth_date=birth_date, .gender=gender, .email = email};
-// 			users[id] = u;
-// 		};
-
-// 		SV * get_user (aTHX_ int id) {
-// 			mapUser::iterator it = users.find(id);
-// 			if( it != users.end() ) {
-// 				User * u = &it->second;
-// 				warn("got it %s", SvPVX(it->second.email));
-// 				warn("got it %s", SvPVX(u->email));
-// 				// std::cout << "B: " << it->second << "\n";
-// 				HV *rv = newHV();
-// 				SV *ret = newRV_noinc(rv);
-// 				// hv_stores(rv,"id",newSViv(u->id));
-// 			}
-// 			else {
-// 				warn("no");
-// 				return NULL;
-// 			}
-// 		}
-// };
-// void
-// HLCup::add_user(int id, SV * email, SV * first_name, SV * last_name, char gender, int birth_date)
-
-// void
-// HLCup::get_user(aTHX_ int id)
-
-#define dSVXF(sv,ref,type) \
-	SV *sv = newSV( sizeof(type) );\
-	SvUPGRADE( sv, SVt_PV ); \
-	SvCUR_set(sv,sizeof(type)); \
-	SvPOKp_on(sv); \
-	type * ref = (type *) SvPVX( sv ); \
-	memset(ref,0,sizeof(type)); \
-
-#define dSVX(sv,ref,type) \
-	SV *sv = newSV( sizeof(type) );\
-	SvUPGRADE( sv, SVt_PV ); \
-	type * ref = (type *) SvPVX( sv ); \
-
 #define mycpy(dst,src) do { memcpy(dst,src,sizeof(src)-1);dst+=sizeof(src)-1; } while(0)
+
+#define location_lookup(sym,id) \
+Location *sym; \
+std::map<int,Location*>::iterator location_it = (*self->locations).find(id) \
+if ( location_it != (*self->locations).end() ) { \
+	sym = (*location_it).second; \
+} \
+else { \
+	croak("Failed to lookup location %d",(id)); \
+}
 
 
 MODULE = Local::HLCup		PACKAGE = Local::HLCup
@@ -170,12 +86,8 @@ MODULE = Local::HLCup		PACKAGE = Local::HLCup
 void new(SV *)
 	PPCODE:
 		HLCup * self = (HLCup *) safemalloc( sizeof(HLCup) );
-		// HLCup self = HLCup();
+		ST(0) = sv_2mortal(sv_bless(newRV_noinc(newSViv(PTR2IV( self ))), gv_stashpv(SvPV_nolen(ST(0)), TRUE)));
 
-		// HLCup * self = (HLCup *) safemalloc( sizeof(HLCup) );
-		// memset(self,0,sizeof(HLCup));
-		SV *iv = newSViv(PTR2IV( self ));
-		ST(0) = sv_2mortal(sv_bless(newRV_noinc(iv), gv_stashpv(SvPV_nolen(ST(0)), TRUE)));
 		self->users = new std::map<int,User*>;
 		self->country_max = 0;
 		self->countries = new std::map<std::string,int>;
@@ -183,43 +95,20 @@ void new(SV *)
 		self->locations = new std::map<int,Location*>;
 		self->visits = new std::map<int,Visit*>;
 
-		// self->Countries = newHV();
-		// self->CountryID = newHV();
-		// self->Locations = newHV();
-		// self->Visits = newHV();
-		// self->UserVisits = newHV();
-		// self->LocationVisits = newHV();
-
 		XSRETURN(1);
 
 void DESTROY(SV *)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		// if (self->UserVisits) free(self->UserVisits);
-		// xs_ev_cnn_self(ScCnn);
-		
-		// if (!PL_dirty && self->reqs) {
+
+		// if (!PL_dirty) {
 		// 	//TODO
-		// 	free_reqs(self, "Destroyed");
-		// 	SvREFCNT_dec(self->reqs);
-		// 	self->reqs = 0;
 		// }
-		// xs_ev_cnn_destroy(self);
 
 void add_user(SV *, int id, SV * email, SV * first_name, SV * last_name, char gender, int birth_date)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		// warn("add_user %d %c %d (%s %s %s)",id, gender, birth_date, SvPVX(email), SvPVX(first_name), SvPVX(last_name));
-			// int id;
-			// int birth_date;
-			// char gender;
-			// SV *email;
-			// SV *first_name;
-			// SV *last_name;
 		User * user = new User;
-		// if (id == 404) {
-		// 	warn("ins %d <%s>",id,SvPVX(email));
-		// }
 		user->id = id;
 		user->birth_date = birth_date;
 		user->gender = gender;
@@ -230,14 +119,54 @@ void add_user(SV *, int id, SV * email, SV * first_name, SV * last_name, char ge
 
 		XSRETURN_UNDEF;
 
+void update_user(SV *, int id, SV * email, SV * first_name, SV * last_name, char gender, SV * birth_date)
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		User * user;
+		std::map<int, User*>::iterator it = (*self->users).find(id);
+		if ( it != (*self->users).end() ) {
+			user = (*it).second;
+		} else {
+			warn("No user for update");
+			XSRETURN_UNDEF;
+		}
+		if (SvOK(birth_date)) {
+			user->birth_date = SvIV(birth_date);
+		}
+		if (gender)
+			user->gender = gender;
+		if (SvOK(email)) {
+			SvREFCNT_dec(user->email);
+			user->email = SvREFCNT_inc(email);
+		}
+		if (SvOK(first_name)) {
+			SvREFCNT_dec(user->first_name);
+			user->first_name = SvREFCNT_inc(first_name);
+		}
+		if (SvOK(last_name)) {
+			SvREFCNT_dec(user->last_name);
+			user->last_name = SvREFCNT_inc(last_name);
+		}
+
+		XSRETURN_UNDEF;
+
+void exists_user(SV *, int id)
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		std::map<int, User*>::iterator it = (*self->users).find(id);
+		if ( it != (*self->users).end() ) {
+			ST(0) = &PL_sv_yes;
+			XSRETURN(1);
+		} else {
+			XSRETURN_UNDEF;
+		}
+
 void get_user(SV *, int id)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		// warn("Lookup %d",id);
 		std::map<int,User*>::iterator it = (*self->users).find(id);
 		if ( it != (*self->users).end() ) {
 			User * user = (*it).second;
-			// warn("Have key: %d/%d <%s>", (*it).first, user->id, SvPVX(user->email));
 			SV *rv = newSV(100 + (SvCUR( user->email ) + SvCUR(user->first_name) + SvCUR(user->last_name)) * 2);
 			SvUPGRADE( rv, SVt_PV );
 			SvPOKp_on(rv);
@@ -305,6 +234,43 @@ void add_location(SV *, int id, int country, int distance, SV *city, SV *place )
 
 		XSRETURN_UNDEF;
 
+void update_location(SV *, int id, int country, SV *distance, SV *city, SV *place )
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		Location * loc;
+		std::map<int, Location*>::iterator it = (*self->locations).find(id);
+		if ( it != (*self->locations).end() ) {
+			loc = (*it).second;
+		} else {
+			warn("No location for update %d",id);
+			XSRETURN_UNDEF;
+		}
+
+		if (country)
+			loc->country = country;
+		if (SvOK(distance))
+			loc->distance = SvIV(distance);
+		if (SvOK(city)) {
+			SvREFCNT_dec(loc->city);
+			loc->city = SvREFCNT_inc(city);
+		}
+		if (SvOK(place)) {
+			SvREFCNT_dec(loc->place);
+			loc->place = SvREFCNT_inc(place);
+		}
+		XSRETURN_UNDEF;
+
+void exists_location(SV *, int id)
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		std::map<int, Location*>::iterator it = (*self->locations).find(id);
+		if ( it != (*self->locations).end() ) {
+			ST(0) = &PL_sv_yes;
+			XSRETURN(1);
+		} else {
+			XSRETURN_UNDEF;
+		}
+
 void get_location(SV *, int id)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
@@ -328,7 +294,7 @@ void get_location(SV *, int id)
 
 			memcpy( p, SvPVX(loc->city),SvCUR(loc->city) );
 			p+=SvCUR(loc->city);
-;
+
 			std::map<int,std::string>::iterator cnit = (*self->country_id).find(loc->country);
 
 			if( cnit != (*self->country_id).end()) {
@@ -365,18 +331,33 @@ void add_visit(SV *, int id, int user, int location, int mark, int visited_at )
 		vis->user = user;
 		vis->mark = mark;
 		vis->visited_at = visited_at;
-		
-		Location *loc = (*self->locations)[location];
-		User *usr = (*self->users)[user];
-		// warn("loc=%p, user=%p",loc,usr);
+
+		Location *loc;
+		std::map<int,Location*>::iterator location_it = (*self->locations).find(location);
+		if ( location_it != (*self->locations).end() ) {
+			loc = (*location_it).second;
+		}
+		else {
+			croak("Failed to lookup location %d",(location));
+		}
+
+		User *usr;// = (*self->users)[vis->user];
+		std::map<int,User*>::iterator user_it = (*self->users).find(user);
+		if ( user_it != (*self->users).end() ) {
+			usr = (*user_it).second;
+		}
+		else {
+			croak("Failed to lookup user %d",(user));
+		}
+
+		// Location *loc = (*self->locations)[location];
+		// User *usr = (*self->users)[user];
 		if (loc && usr) {
 			VisitSet *vs = new VisitSet;
 			vs->visit = vis;
 			vs->user = usr;
 			vs->location = loc;
-			// warn("%d -> %p",vis->visited_at, vs);
 
-			// usr->visits[vis->visited_at] = vs;
 			(*self->visits)[id] = vis;
 			usr->visits.insert(std::pair< int,VisitSet* >(vis->visited_at, vs));
 			loc->visits.insert(std::pair< int,VisitSet* >(vis->visited_at, vs));
@@ -384,6 +365,112 @@ void add_visit(SV *, int id, int user, int location, int mark, int visited_at )
 		else{
 			croak("XXX: No user or location");
 		}
+		XSRETURN_UNDEF;
+
+void update_visit(SV *, int id, int user, int location, int mark, int visited_at )
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		std::map<int, Visit*>::iterator it = (*self->visits).find(id);
+		Visit * vis;
+		if ( it != (*self->visits).end() ) {
+			vis = (*it).second;
+		} else {
+			XSRETURN_UNDEF;
+			return;
+		}
+		// // 1. change only visited_at. move in user & location
+		// // 2. change user. delete from old user, add in new
+		// // 3. change location. delete from old loc, add in new
+
+		if (mark > -1)
+			vis->mark = mark;
+
+		Location *loc;
+		std::map<int,Location*>::iterator location_it = (*self->locations).find(vis->location);
+		if ( location_it != (*self->locations).end() ) {
+			loc = (*location_it).second;
+		}
+		else {
+			croak("Failed to lookup location %d",(vis->location));
+		}
+
+		User *usr;// = (*self->users)[vis->user];
+		std::map<int,User*>::iterator user_it = (*self->users).find(vis->user);
+		if ( user_it != (*self->users).end() ) {
+			usr = (*user_it).second;
+		}
+		else {
+			croak("Failed to lookup user %d",(vis->user));
+		}
+
+		VisitSet *vs;
+
+		std::multimap<int, VisitSet*>::iterator loc_it;
+		std::map<int, VisitSet*>::iterator usr_it;
+
+		loc_it = loc->visits.find( vis->visited_at );
+		if (loc_it != loc->visits.end()) {
+			for (; loc_it != loc->visits.end(); loc_it++) {
+				if ((*loc_it).second->visit->id == id) {
+					vs = (*loc_it).second;
+					loc->visits.erase(loc_it);
+					// warn("found loc vs for update: %p", vs);
+					break;
+				}
+			}
+		}
+		else {
+			warn("Bullshit, visit %d not found in location", id);
+		}
+
+		usr_it = usr->visits.find( vis->visited_at );
+		if (usr_it != usr->visits.end()) {
+			for (; usr_it != usr->visits.end(); usr_it++) {
+				if ((*usr_it).second->visit->id == id) {
+					vs = (*usr_it).second;
+					usr->visits.erase(usr_it);
+					// warn("found usr vs for update: %p", vs);
+					break;
+				}
+			}
+		}
+		else {
+			warn("Bullshit, visit %d not found in user", id);
+		}
+
+		if (visited_at) {
+			vis->visited_at = visited_at;
+		}
+
+		if (location) {
+			vis->location = location;
+			// loc = (*self->locations)[location];
+			std::map<int,Location*>::iterator location_it = (*self->locations).find(location);
+			if ( location_it != (*self->locations).end() ) {
+				loc = (*location_it).second;
+			}
+			else {
+				croak("Failed to lookup location %d",(vis->location));
+			}
+
+			vs->location = loc;
+		}
+
+		if (user) {
+			vis->user = user;
+			// usr = (*self->users)[user];
+			std::map<int,User*>::iterator user_it = (*self->users).find(user);
+			if ( user_it != (*self->users).end() ) {
+				usr = (*user_it).second;
+			}
+			else {
+				croak("Failed to lookup user %d",(user));
+			}
+			vs->user = usr;
+		}
+		usr->visits.insert(std::pair< int,VisitSet* >(vis->visited_at, vs));
+		loc->visits.insert(std::pair< int,VisitSet* >(vis->visited_at, vs));
+
 		XSRETURN_UNDEF;
 
 void exists_visit(SV *, int id)
@@ -402,7 +489,6 @@ void get_visit(SV *, int id)
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
 		std::map<int, Visit*>::iterator it = (*self->visits).find(id);
 		if ( it != (*self->visits).end() ) {
-			// warn("Have key: %d", id);
 			Visit * vis = (*it).second;
 			SV *rv = newSV(100);
 			SvUPGRADE( rv, SVt_PV );
@@ -429,18 +515,22 @@ void get_visit(SV *, int id)
 
 		}
 		else {
-			// warn("Not found: %d", id);
 			XSRETURN_UNDEF;
 		}
 
 void get_location_avg(SV *, int id, int from, int till, int from_age, int till_age, char gender)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		Location *loc = (*self->locations)[id]; // TODO: find
-		if (!loc) XSRETURN_UNDEF;
+		Location *loc;
+		std::map<int,Location*>::iterator location_it = (*self->locations).find(id);
+		if ( location_it != (*self->locations).end() ) {
+			loc = (*location_it).second;
+		}
+		else {
+			XSRETURN_UNDEF;
+		}
 
 		std::multimap<int, VisitSet*>::iterator it;
-		// warn("lookup from %d for %d",from, gender);
 		if (from) {
 			it = loc->visits.lower_bound(from);
 		}
@@ -453,14 +543,12 @@ void get_location_avg(SV *, int id, int from, int till, int from_age, int till_a
 		int cnt = 0;
 
 		for (; it != loc->visits.end(); ++it) {
-			// warn("XXX %d ~~ %d (%d)",(*it).second->visit->visited_at, till, (*it).second->user->birth_date);
 			if ( (*it).second->visit->visited_at > till ) break;
 			if ( (*it).second->user->birth_date <= from_age ) continue;
 			if ( (*it).second->user->birth_date > till_age ) continue;
 			if ( gender && (*it).second->user->gender != gender ) continue;
 			sum += (*it).second->visit->mark;
 			cnt++;
-			// warn("item: %d; -> user bd: %d",(*it).first, (*it).second->user->birth_date);
 		}
 
 		SV *rv = newSV(22);
@@ -471,12 +559,56 @@ void get_location_avg(SV *, int id, int from, int till, int from_age, int till_a
 		// {"avg":,}
 
 		if (cnt > 0) {
-			p += snprintf(p, 22, "{\"avg\":%.6g}\n", (double)sum/cnt);
+			// int($sum/$cnt*1e5+0.5)/1e5
+			// p += snprintf(p, 22, "{\"avg\":%.6g}\n", (double)sum/cnt+DBL_EPSILON);
+			p += snprintf(p, 22, "{\"avg\":%.6g}\n", ((double)(int)((double)sum * 1e5 / cnt + 0.5))/1e5);
 		} else {
 			mycpy(p,"{\"avg\":0}\n");
 		}
 		SvCUR_set(rv,p - SvPVX(rv));
 		ST(0) = rv;
+		XSRETURN(1);
+
+void get_location_visits(SV *, int id, int from, int till, int from_age, int till_age, char gender)
+	PPCODE:
+		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
+		Location *loc;
+		std::map<int,Location*>::iterator location_it = (*self->locations).find(id);
+		if ( location_it != (*self->locations).end() ) {
+			loc = (*location_it).second;
+		}
+		else {
+			XSRETURN_UNDEF;
+		}
+
+		std::multimap<int, VisitSet*>::iterator it;
+		if (from) {
+			it = loc->visits.lower_bound(from);
+		}
+		else {
+			it = loc->visits.begin();
+		}
+
+		//warn("%d < visited_at < %d; %d < age < %d (%c)", from, till, from_age, till_age, gender);
+		AV *rv = newAV();
+
+		for (; it != loc->visits.end(); ++it) {
+			if ( (*it).second->visit->visited_at > till ) break;
+			if ( (*it).second->user->birth_date <= from_age ) continue;
+			if ( (*it).second->user->birth_date > till_age ) continue;
+			if ( gender && (*it).second->user->gender != gender ) continue;
+			VisitSet *vs = (*it).second;
+			HV * vh = newHV();
+			hv_stores(vh,"id",newSViv( vs->visit->id ));
+			hv_stores(vh,"mark",newSViv( vs->visit->mark ));
+			hv_stores(vh,"user",newSViv( vs->user->id ));
+			hv_stores(vh,"location",newSViv( vs->location->id ));
+			hv_stores(vh,"birth_date",newSViv( vs->user->birth_date ));
+			hv_stores(vh,"gender",newSVpvf( "%c",vs->user->gender ));
+			av_push(rv,newRV_noinc((SV *)vh));
+		}
+
+		ST(0) = sv_2mortal(newRV_noinc((SV*)rv));
 		XSRETURN(1);
 
 void get_user_visits(SV *, int id, int from, int till, int country, int distance)
@@ -509,7 +641,6 @@ void get_user_visits(SV *, int id, int from, int till, int country, int distance
 		bool first = true;
 		
 		for (; it != usr->visits.end(); ++it) {
-			//warn("XXX: Date: %d < %d < %d (%d) [%d~%d] (%s)",from, (*it).second->visit->visited_at, till, (*it).second->user->birth_date, (*it).second->location->distance, distance, SvPVX((*it).second->location->place));
 			if ( (*it).second->visit->visited_at > till ) break;
 			if ( country && (*it).second->location->country != country ) continue;
 			if ( distance && (*it).second->location->distance >= distance ) continue;
@@ -526,10 +657,12 @@ void get_user_visits(SV *, int id, int from, int till, int country, int distance
 			sv_catpvf(rv, ",\"visited_at\":%d",vis->visited_at);
 			sv_catpv(rv,",\"place\":\"");
 			sv_catpvn(rv, SvPVX(loc->place),SvCUR(loc->place));
+
+			// sv_catpvf(rv, "\",\"extra\":\"loc:%d",loc->id);
+
 			sv_catpv(rv,"\"}");
 		}
 		sv_catpv(rv,"\n]}\n");
 		ST(0) = rv;
 		XSRETURN(1);
-
 

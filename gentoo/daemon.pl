@@ -25,6 +25,7 @@ use Local::HLCup;
 my $port;
 my $debug;
 my $src;
+my $options = '/tmp/data/options.txt';
 BEGIN {
 	$port = 80;
 	$src = 'TRAIN';
@@ -32,6 +33,7 @@ BEGIN {
 		'p|port=n' => \$port,
 		'd|debug+' => \$debug,
 		's|source=s' => \$src,
+		'o|options=s' => \$options,
 	) or die;
 }
 use constant DEBUG => $debug;
@@ -50,6 +52,7 @@ BEGIN {
 our $DST = '/tmp/unpacked';
 if (DEBUG) {
 	$DST = "hlcupdocs/data/$src/data";
+	$options = "hlcupdocs/data/$src/data/options.txt";
 }
 else {
 	my $start = time;
@@ -152,9 +155,9 @@ WORKER:
 
 my $db = Local::HLCup->new();
 
-$SIG{__DIE__} = sub {
-	warn "@_";
-};
+# $SIG{__DIE__} = sub {
+# 	warn "@_";
+# };
 $EV::DIED = sub {
 	warn "@_/$@";
 };
@@ -188,6 +191,14 @@ our %STAT;
 our $NOW;
 ################ Loading DATA
 {
+	if (open my $f, $options) {
+		$NOW = 0+<$f>;
+		close $f;
+		warn "Loaded time = $NOW from $options\n";
+	}
+	else {
+		warn "$options: $!\n";
+	}
 	my ($start,$count);
 	warn "Loading DATA from $DST\n";
 	$start = time; $count = 0;
@@ -223,6 +234,8 @@ our $NOW;
 	warn sprintf "Loaded %d visits in %0.4fs\n", $count, time-$start;
 	$NOW //= time;
 }
+warn mystat(),"\n";
+AE::now_update();
 $NOW = Time::Moment->from_epoch($NOW);
 ################ Loaded DATA
 sub get_user {
@@ -245,14 +258,12 @@ sub get_location {
 
 sub get_user_visits {
 	my ($res,$id,$prm) = @_;
-	# return $res->(404,'{}');
-	# my $user = $USERS[$id] or return $res->(404,'{}');
+
 	my $from = 0;
 	my $till = 2**31-1;
 	my $country;
 	my $distance;
-	# # p $prm;
-	# my @cond;
+
 	if (exists $prm->{fromDate}) {
 		return $res->(400,'{}') unless $prm->{fromDate} =~ /^\d+$/;
 		$from = $prm->{fromDate};
@@ -271,38 +282,19 @@ sub get_user_visits {
 	}
 	my $vis = $db->get_user_visits($id,$from,$till,$country,$distance)
 		or return $res->(404,'{}');
+	
 	return $res->(200, $vis);
-
-	# my $all = $USER_VISITS[ $id ]
-	# 	or return $res->(200, '{"visits":[]}');
-
-	# my @visits;
-	# my $filter;
-	# if (@cond) {
-	# 	my $body = 'sub{'.join(' and ', @cond).'}';
-	# 	$filter = eval $body or die $@;
-	# }
-	# for($filter ? grep &$filter, @$all : @$all ) {
-	# 	push @visits, {
-	# 		mark       => 0+$_->{visit}{mark},
-	# 		visited_at => 0+$_->{visit}{visited_at},
-	# 		place      => $_->{location}{place},
-	# 	};
-	# }
-	# return $res->(200, $JSON->encode({
-	# 	visits => \@visits,
-	# }));
 }
+
 sub get_location_avg {
 	my ($res,$id,$prm) = @_;
-	# my $loc = $LOCATIONS[$id] or return $res->(404,'{}');
+
 	my $from = 0;
 	my $till = 2**31-1;
 	my $from_age = 2**31-1;
 	my $till_age = -2**31;
 	my $gender;
 
-	# my @cond;
 	if (exists $prm->{fromDate}) {
 		return $res->(400,'{}') unless $prm->{fromDate} =~ /^\d+$/;
 		$from = $prm->{fromDate};
@@ -330,297 +322,192 @@ sub get_location_avg {
 	return $res->(200, $rv);
 }
 
+sub get_location_visits {
+	my ($res,$id,$prm) = @_;
+
+	my $from = 0;
+	my $till = 2**31-1;
+	my $from_age = 2**31-1;
+	my $till_age = -2**31;
+	my $gender;
+
+	if (exists $prm->{fromDate}) {
+		return $res->(400,'{}') unless $prm->{fromDate} =~ /^\d+$/;
+		$from = $prm->{fromDate};
+	}
+	if (exists $prm->{toDate}) {
+		return $res->(400,'{}') unless $prm->{toDate} =~ /^\d+$/;
+		$till = $prm->{toDate};
+	}
+
+	if (exists $prm->{fromAge}) {
+		return $res->(400,'{}') unless $prm->{fromAge} =~ /^\d+$/;
+		$from_age = $NOW->minus_years( $prm->{fromAge} )->epoch;
+	}
+	if (exists $prm->{toAge}) {
+		return $res->(400,'{}') unless $prm->{toAge} =~ /^\d+$/;
+		$till_age = $NOW->minus_years( $prm->{toAge} )->epoch;
+	}
+	if (exists $prm->{gender}) {
+		return $res->(400,'{}') unless $prm->{gender} =~ /^(f|m)$/;
+		$gender = $prm->{gender};
+	}
+
+	my $rv = $db->get_location_visits($id,$from,$till,$till_age,$from_age,$gender)
+		or return $res->(404,'{}');
+	return $res->(200, JSON::XS->new->utf8->pretty->encode($rv));
+
+}
+
 sub update_user {
 	my ($res,$id,$prm,$data) = @_;
-	return $res->(404,'{}');
-	# my $user = $USERS[$id] or return $res->(404,'{}');
-	# length $data->{email} and length $data->{email} < 100
-	# 	or return $res->(400,'{"error":"bad email"}')
-	# 	if exists $data->{email};
-	# $data->{birth_date} =~ /^-?\d+$/
-	# 	or return $res->(400,'{"error":"bad birth_date"}')
-	# 	if exists $data->{birth_date};
-	# $data->{gender} =~ /^(f|m)$/
-	# 	or return $res->(400,'{"error":"bad gender"}')
-	# 	if exists $data->{gender};
-	# length $data->{first_name} and length $data->{first_name} < 50
-	# 	or return $res->(400,'{"error":"bad first_name"}')
-	# 	if exists $data->{first_name};
-	# length $data->{last_name} and length $data->{last_name} < 50
-	# 	or return $res->(400,'{"error":"bad last_name"}')
-	# 	if exists $data->{last_name};
+	return $res->(404,'{}') unless $db->exists_user($id);
 
-	# $res->("200",'{}');
+	length $data->{email} and length $data->{email} < 100
+		or return $res->(400,'{"error":"bad email"}')
+		if exists $data->{email};
+	$data->{birth_date} =~ /^-?\d+$/
+		or return $res->(400,'{"error":"bad birth_date"}')
+		if exists $data->{birth_date};
+	$data->{gender} =~ /^(f|m)$/
+		or return $res->(400,'{"error":"bad gender"}')
+		if exists $data->{gender};
+	length $data->{first_name} and length $data->{first_name} < 50
+		or return $res->(400,'{"error":"bad first_name"}')
+		if exists $data->{first_name};
+	length $data->{last_name} and length $data->{last_name} < 50
+		or return $res->(400,'{"error":"bad last_name"}')
+		if exists $data->{last_name};
 
-	# $user->{email}      = $data->{email}      if exists $data->{email};
-	# $user->{birth_date} = $data->{birth_date} if exists $data->{birth_date};
-	# $user->{gender}     = $data->{gender}     if exists $data->{gender};
-	# $user->{first_name} = $data->{first_name} if exists $data->{first_name};
-	# $user->{last_name}  = $data->{last_name}  if exists $data->{last_name};
+	$res->("200",'{}');
 
-	# return;
+	$db->update_user($id, @{ $data }{qw( email first_name last_name gender birth_date)});
 }
+
 sub update_location {
 	my ($res,$id,$prm,$data) = @_;
-	return $res->(404,'{}');
-	# my $loc = $LOCATIONS[$id] or return $res->(404,'{}');
+	return $res->(404,'{}') unless $db->exists_location($id);
 
-	# length $data->{place}
-	# 	or return $res->(400,'{"error":"bad place"}')
-	# 	if exists $data->{place};
+	length $data->{place}
+		or return $res->(400,'{"error":"bad place"}')
+		if exists $data->{place};
 
-	# length $data->{country} and length $data->{country} < 50
-	# 	or return $res->(400,'{"error":"bad country"}')
-	# 	if exists $data->{country};
+	length $data->{city} and length $data->{city} < 50
+		or return $res->(400,'{"error":"bad city"}')
+		if exists $data->{city};
 
-	# length $data->{city} and length $data->{city} < 50
-	# 	or return $res->(400,'{"error":"bad city"}')
-	# 	if exists $data->{city};
+	$data->{distance} =~ /^\d+$/
+		or return $res->(400,'{"error":"bad distance"}')
+		if exists $data->{distance};
 
-	# $data->{distance} =~ /^\d+$/
-	# 	or return $res->(400,'{"error":"bad distance"}')
-	# 	if exists $data->{distance};
+	if (exists $data->{country}) {
+		length $data->{country} and length $data->{country} < 50
+			or return $res->(400,'{"error":"bad country"}');
+		$data->{country} = $db->get_country($data->{country});
+	}
 
-	# $res->("200",'{}');
+	$res->("200",'{}');
 
-	# $loc->{place} = $data->{place} if exists $data->{place};
-	# $loc->{distance} = $data->{distance} if exists $data->{distance};
-	# $loc->{city} = $data->{city} if exists $data->{city};
-	# $loc->{country} = get_country $data->{country} or die "No country" if exists $data->{country};
-
-	# return;
+	$db->update_location($id, @{$data}{qw(country distance city place) });
 }
 
 sub update_visit {
 	my ($res,$id,$prm,$data) = @_;
 	return $res->(404,'{}') unless $db->exists_visit($id);
-	return $res->(501,'{}')
-	# my $vis = $VISITS[$id] or return $res->(404,'{}');
 
-	# $data->{mark} =~ /^[0-5]$/
-	# 	or return $res->(400,'{"error":"bad mark"}')
-	# 	if exists $data->{mark};
+	$data->{mark} =~ /^[0-5]$/
+		or return $res->(400,'{"error":"bad mark"}')
+		if exists $data->{mark};
 
-	# my $resort_loc;
-	# my $resort_usr;
+	if (exists $data->{visited_at}) {
+		$data->{visited_at} =~ /^\d+$/
+			or return $res->(400,'{"error":"bad visited_at"}');
+	}
 
-	# if (exists $data->{visited_at}) {
-	# 	$data->{visited_at} =~ /^\d+$/
-	# 		or return $res->(400,'{"error":"bad visited_at"}');
-	# 	$resort_loc = 1;
-	# 	$resort_usr = 1;
-	# }
-	# my $loc;
-	# my $user;
+	if (exists $data->{location}) {
+		return $res->(400,'{"error":"bad location"}')
+			if $data->{location} !~ /^\d+$/ or !$db->exists_location($data->{location});
+	}
+	if (exists $data->{user}) {
+		return $res->(400,'{"error":"bad user"}')
+			if $data->{user} !~ /^\d+$/ or !$db->exists_user($data->{user});
+	}
+	$res->(200,'{}');
 
-
-	# if (exists $data->{location} and $vis->{location} != $data->{location}) {
-	# 	$loc = $LOCATIONS[$data->{location}] or return $res->(400,'{"error":"bad location"}');
-	# 	$resort_loc = 0;
-	# }
-	# if (exists $data->{user} and $vis->{user} != $data->{user}) {
-	# 	$user = $USERS[$data->{user}] or return $res->(400,'{"error":"bad user"}');
-	# 	$resort_usr = 0;
-	# }
-	# $res->(200,'{}');
-
-	# $vis->{mark} = $data->{mark} if exists $data->{mark};
-	# $vis->{visited_at} = $data->{visited_at} if exists $data->{visited_at};
-
-	# if ($loc) {
-	# 	my $cond;
-	# 	# if ($vis->{location} == 935 or $data->{location} == 935) {
-	# 	# 	p $vis;
-	# 	# 	p $data;
-	# 	# 	$cond = 1;
-	# 	# }
-	# 	my $oldv = $vis->{location};
-	# 	my $newv = $data->{location};
-
-	# 	my $old = $LOCATION_VISITS[ $vis->{location} ];
-	# 	my $new = $LOCATION_VISITS[ $data->{location} ] //= [];
-
-	# 	# dump_visits "Before", $old if DEBUG and $cond;
-	# 	$vis->{location} = $data->{location};
-	# 	my $ptr;
-
-	# 	# p $new if $cond;
-
-	# 	aefor 0, $#$old, sub {
-	# 		if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-	# 			# warn "rem $_" if $cond;
-	# 			$ptr = splice @$old, $_,1, ();
-	# 			last;
-	# 		}
-	# 	}, sub {
-	# 		aefor 0, $#$new, sub {
-	# 			# warn "$_: $new->[$_]{visit}{visited_at} > $vis->{visited_at}" if $cond;
-	# 			last if $new->[$_]{visit}{visited_at} > $vis->{visited_at};
-	# 		}, sub {
-	# 			# warn "psh $_" if $cond;
-	# 			splice @$new,$_, 0, $ptr;
-	# 			$ptr->{location} = $loc;
-	# 		};
-	# 	};
-
-
-	# 	# for ( 0..$#$old ) {
-	# 	# 	if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-	# 	# 		# warn "rem $_" if $cond;
-	# 	# 		$ptr = splice @$old, $_,1, ();
-	# 	# 		last;
-	# 	# 	}
-	# 	# }
-	# 	# my $pos;
-	# 	# for ($pos = 0; $pos < @$new; $pos++ ) {
-	# 	# 	last if $new->[$pos]{visit}{visited_at} > $vis->{visited_at};
-	# 	# }
-	# 	# # warn "psh $pos" if $cond;
-	# 	# splice @$new,$pos, 0, $ptr;
-	# 	# $ptr->{location} = $loc;
-	# }
-
-
-	# if ($user) {
-	# 	my $old = $USER_VISITS[ $vis->{user} ];
-	# 	my $new = $USER_VISITS[ $data->{user} ] //= [];
-	# 	$vis->{user} = $data->{user};
-	# 	my $ptr;
-
-	# 	aefor 0,$#$old, sub {
-	# 		if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-	# 			$ptr = splice @$old, $_,1, ();
-	# 			last;
-	# 		}
-	# 	}, sub {
-	# 		aefor 0, $#$new, sub {
-	# 			last if $new->[$_]{visit}{visited_at} > $vis->{visited_at};
-	# 		},
-	# 		sub {
-	# 			splice @$new,$_, 0, $ptr;
-	# 			$ptr->{user} = $user;
-	# 		};
-	# 	};
-
-	# 	# for ( 0..$#$old ) {
-	# 	# 	if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-	# 	# 		$ptr = splice @$old, $_,1, ();
-	# 	# 		last;
-	# 	# 	}
-	# 	# }
-	# 	# for ($pos = 0; $pos < @$new; $pos++ ) {
-	# 	# 	last if $new->[$pos]{visit}{visited_at} > $vis->{visited_at};
-	# 	# }
-	# 	# splice @$new,$pos, 0, $ptr;
-	# 	# $ptr->{user} = $user;
-	# }
-
-
-	# if ($resort_usr) {
-	# 	AE::postpone {
-	# 		my $visits = $USER_VISITS[ $vis->{user} ];
-	# 		@$visits = sort {
-	# 			$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-	# 		} @$visits;
-	# 	};
-	# }
-	# if ($resort_loc) {
-	# 	AE::postpone {
-	# 		my $visits = $LOCATION_VISITS[ $vis->{location} ];
-	# 		@$visits = sort {
-	# 			$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-	# 		} @$visits;
-	# 	};
-	# }
+	$db->update_visit($id, $data->{user}, $data->{location}, $data->{mark} // -1, $data->{visited_at} );
 }
 
 sub create_user {
 	my ($res,undef,$prm,$data) = @_;
-	$res->(400,'{"error":"bad id"}');
-	# ($data->{id} !~ /^\d+$/ or $USERS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
+	if ($data->{id} !~ /^\d+$/ or $db->exists_user($data->{id})) {
+		return $res->(400,'{"error":"bad id"}');
+	}
 
-	# length $data->{email} and length $data->{email} < 100
-	# 	or return $res->(400,'{"error":"bad email"}')
-	# 	;
-	# $data->{birth_date} =~ /^-?\d+$/
-	# 	or return $res->(400,'{"error":"bad birth_date"}')
-	# 	;
-	# $data->{gender} =~ /^(f|m)$/
-	# 	or return $res->(400,'{"error":"bad gender"}')
-	# 	;
-	# length $data->{first_name} and length $data->{first_name} < 50
-	# 	or return $res->(400,'{"error":"bad first_name"}')
-	# 	;
-	# length $data->{last_name} and length $data->{last_name} < 50
-	# 	or return $res->(400,'{"error":"bad last_name"}')
-	# 	;
+	length $data->{email} and length $data->{email} < 100
+		or return $res->(400,'{"error":"bad email"}')
+		;
+	$data->{birth_date} =~ /^-?\d+$/
+		or return $res->(400,'{"error":"bad birth_date"}')
+		;
+	$data->{gender} =~ /^(f|m)$/
+		or return $res->(400,'{"error":"bad gender"}')
+		;
+	length $data->{first_name} and length $data->{first_name} < 50
+		or return $res->(400,'{"error":"bad first_name"}')
+		;
+	length $data->{last_name} and length $data->{last_name} < 50
+		or return $res->(400,'{"error":"bad last_name"}')
+		;
 
-	# $res->("200",'{}');
-	# $USERS[ $data->{id} ] = $data;
-	# return;
+	$res->("200",'{}');
+	
+	$db->add_user(@{ $data }{qw( id email first_name last_name gender birth_date)});
 }
 
 sub create_location {
 	my ($res,undef,$prm,$data) = @_;
-	return $res->(400,'{"error":"bad id"}');
-	# ($data->{id} !~ /^\d+$/ or $LOCATIONS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
+	if ($data->{id} !~ /^\d+$/ or $db->exists_location($data->{id})) {
+		return $res->(400,qq|{"error":"bad id: $data->{id}"}|);
+	}
 
-	# length $data->{place}
-	# 	or return $res->(400,'{"error":"bad place"}')
-	# 	;
+	length $data->{place}
+		or return $res->(400,'{"error":"bad place"}')
+		;
 
-	# length $data->{country} and length $data->{country} < 50
-	# 	or return $res->(400,'{"error":"bad country"}')
-	# 	;
+	length $data->{country} and length $data->{country} < 50
+		or return $res->(400,'{"error":"bad country"}')
+		;
 
-	# length $data->{city} and length $data->{city} < 50
-	# 	or return $res->(400,'{"error":"bad city"}')
-	# 	;
+	length $data->{city} and length $data->{city} < 50
+		or return $res->(400,'{"error":"bad city"}')
+		;
 
-	# $data->{distance} =~ /^\d+$/
-	# 	or return $res->(400,'{"error":"bad distance"}')
-	# 	;
-	# $res->("200",'{}');
-	# $data->{country} = get_country $data->{country};
-	# $LOCATIONS[$data->{id}] = $data;
-	# return;
+	$data->{distance} =~ /^\d+$/
+		or return $res->(400,'{"error":"bad distance"}')
+		;
+	$res->("200",'{}');
+
+	$db->add_location($data->{id},$db->get_country($data->{country}), @{$data}{ qw(distance city place) });
+	return;
 }
 
 sub create_visit {
 	my ($res,undef,$prm,$data) = @_;
-	return $res->(400,'{"error":"bad id"}');
-	# my $loc = $LOCATIONS[$data->{location}] or return $res->(400,'{"error":"bad location"}');
-	# my $usr = $USERS[$data->{user}] or return $res->(400,'{"error":"bad user"}');
-	# ($data->{id} !~ /^\d+$/ or $VISITS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
-	# $data->{mark} =~ /^[0-5]$/ or return $res->(400,'{"error":"bad mark"}');
-	# $data->{visited_at} =~ /^\d+$/ or return $res->(400,'{"error":"bad visited_at"}');
+	if ($data->{id} !~ /^\d+$/ or $db->exists_visit($data->{id})) {
+		return $res->(400,'{"error":"bad id"}');
+	}
+	if (!$db->exists_user($data->{user})) {
+		return $res->(400,'{"error":"bad user"}');
+	}
+	if (!$db->exists_location($data->{location})) {
+		return $res->(400,'{"error":"bad location"}');
+	}
+	$data->{mark} =~ /^[0-5]$/ or return $res->(400,'{"error":"bad mark"}');
+	$data->{visited_at} =~ /^\d+$/ or return $res->(400,'{"error":"bad visited_at"}');
 
-	# $res->(200,'{}');
-	# $VISITS[$data->{id}] = $data;
+	$res->(200,'{}');
 
-	# AE::postpone {
-	# 	my $uvl = {
-	# 		user => $usr,
-	# 		visit => $data,
-	# 		location => $loc,
-	# 	};
-
-	# 	my $uv = $USER_VISITS[ $data->{user} ] //= [];
-	# 	my $lv = $LOCATION_VISITS[ $data->{location} ] //= [];
-
-	# 	my $pos;
-	# 	for ($pos = 0; $pos < @$lv; $pos++) {
-	# 		last if $lv->[$pos]{visit}{visited_at} > $data->{visited_at};
-	# 	}
-	# 	splice @$lv,$pos,0,$uvl;
-
-	# 	for ($pos = 0; $pos < @$uv; $pos++) {
-	# 		last if $uv->[$pos]{visit}{visited_at} > $data->{visited_at};
-	# 	}
-	# 	splice @$uv,$pos,0,$uvl;
-	# };
-
-	# return;
+	$db->add_visit(@{$data}{qw(id user location mark visited_at)});
 }
 
 my $GET = Router::R3->new(
@@ -629,6 +516,7 @@ my $GET = Router::R3->new(
 	'/locations/{id:\d+}'     => \&get_location,
 	'/users/{id:\d+}/visits'  => \&get_user_visits,
 	'/locations/{id:\d+}/avg' => \&get_location_avg,
+	'/locations/{id:\d+}/visits' => \&get_location_visits,
 );
 my $POST = Router::R3->new(
 	'/users/new'              => \&create_user,
@@ -677,7 +565,7 @@ my $prev = $cnt;
 my $last_ac = 'same';
 
 sub mystat {
-	return $JSON->encode(\%STAT);
+	# return $JSON->encode(\%STAT);
     my ($vsize,$rss) = (0,0);
     eval {
             my $stat = do { open my $f,'<:raw',"/proc/$$/stat" or die $!; local $/; <$f> };

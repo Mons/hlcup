@@ -114,19 +114,32 @@ my $test;$test = sub {
 					# p $_[0];
 					# p $JSON->decode($_[0]);
 					# p $JSON->decode($body);
+
+					# my ($got) = eval {$JSON->decode_prefix($_[0])};
+					# eval {
+					# 	if (ref $got eq 'HASH' and ref $got->{visits} eq 'ARRAY') {
+					# 		for (@{ $got->{visits} }) { delete $_->{extra}};
+					# 	}
+					# };
+
+					my $got = eval {$JSON->decode($_[0])};
+					my $exp = $JSON->decode($body);
 					$ok += cmp_deeply
-						$JSON->decode($_[0]),
-						$JSON->decode($body),
+						$got,
+						$exp,
 						"$met $path body"
 						or diag $body;
 				}
 				else {
-					$ok += like $body, qr{^(|\{\})$},"$met $path body";
+					$ok += like $_[0], qr{^(|\{\})$},"$met $path body";
 				}
 
 				unless ($ok == 2) {
 					diag $_[1]{Status};
 					diag decode utf8 => $_[0];
+					if ($met eq 'POST') {
+						diag decode utf8 => $am->{body};
+					}
 					my $jd = $JSON->decode($body);
 					if ($jd->{visits}) {
 						dump_user_visits "expected", $jd->{visits};
