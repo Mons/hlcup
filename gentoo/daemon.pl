@@ -15,18 +15,29 @@ use lib glob("../libs/*/lib"),glob("../libs/*/blib/lib"),glob("../libs/*/blib/ar
 use Time::Moment;
 use EV;
 use Errno;
-use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY);
+use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY TCP_DEFER_ACCEPT TCP_CORK);
 use Router::R3;
 use URI::XSEscape 'uri_unescape';
 use Local::HLCup;
+use HTTP::Parser::XS qw(parse_http_request);
+
 ##################################################
 
 
 my $port;
 my $debug;
 my $src;
-my $options = '/tmp/data/options.txt';
+my $options;
+our $DST;
+our $NOW;
+
+my $mode_local_train;
+my $mode_run_test;
+my $mode_run_prod;
+
 BEGIN {
+	$options = '/tmp/data/options.txt';
+	$DST = '/tmp/unpacked';
 	$port = 80;
 	$src = 'TRAIN';
 	GetOptions(
@@ -35,26 +46,48 @@ BEGIN {
 		's|source=s' => \$src,
 		'o|options=s' => \$options,
 	) or die;
+	if ($debug) {
+		$DST = "hlcupdocs/data/$src/data";
+		$options = "hlcupdocs/data/$src/data/options.txt";
+		$mode_local_train = 1 if $src eq 'TRAIN';
+	}
+	my $mode;
+	if (open my $f, $options) {
+		$NOW = 0+<$f>;
+		$mode = 0+<$f>;
+		close $f;
+		warn "Loaded time = $NOW, mode = $mode from $options\n";
+	}
+	else {
+		warn "$options: $!\n";
+	}
+	$mode_run_test = $mode == 0;
+	$mode_run_prod = $mode == 1;
 }
 use constant DEBUG => $debug;
+use constant LOCAL_TRAIN => $mode_local_train;
+use constant RUN_TEST => $mode_run_test;
+use constant RUN_PROD => $mode_run_prod;
+
 our $JSON = JSON::XS->new->utf8;
 our $JSONN = JSON::XS->new->utf8->allow_nonref;
 
 warn `cat /proc/cpuinfo | egrep 'model name|bogomips' | head -n2`;
 system("ulimit -n 200000");
+
+system("sysctl net.ipv4.tcp_fin_timeout");
+system("sysctl net.ipv4.tcp_tw_reuse");
+system("sysctl net.ipv4.tcp_tw_recycle");
+
 system("sysctl net.ipv4.tcp_tw_reuse=1");
+system("sysctl net.ipv4.tcp_tw_recycle=1");
 system("sysctl net.ipv4.tcp_slow_start_after_idle=0");
 
 BEGIN {
 	eval { Socket->import('TCP_QUICKACK');1} or warn "No TCP_QUICKACK\n";
 	eval { Socket->import('TCP_LINGER2');1}  or warn "No TCP_LINGER2\n";
 }
-our $DST = '/tmp/unpacked';
-if (DEBUG) {
-	$DST = "hlcupdocs/data/$src/data";
-	$options = "hlcupdocs/data/$src/data/options.txt";
-}
-else {
+unless (DEBUG) {
 	my $start = time;
 	system("unzip -o /tmp/data/data.zip -d $DST/ >/dev/null 2>/dev/null")
 		== 0 or die "Failed to unpack: $?";
@@ -188,17 +221,8 @@ our %STAT;
 # }
 
 
-our $NOW;
 ################ Loading DATA
 {
-	if (open my $f, $options) {
-		$NOW = 0+<$f>;
-		close $f;
-		warn "Loaded time = $NOW from $options\n";
-	}
-	else {
-		warn "$options: $!\n";
-	}
 	my ($start,$count);
 	warn "Loading DATA from $DST\n";
 	$start = time; $count = 0;
@@ -580,27 +604,212 @@ sub mystat {
 
 my $CONNS = my $REQS = 0;
 
-my $g;$g = EV::timer 0,10, sub {
-	if ($prev == $cnt) {
-		# warn "Same";
-		if ($last_ac eq 'grow') {
-			# warn "Stopped";
-			warn sprintf "END[$CONNS:$REQS]; Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
-			$prev = $cnt = $max = $sum = 0;
-			$min = 1e10;
+sub do_stat {
+	sprintf "[$CONNS:$REQS] %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n",
+		$cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+}
+
+# my $g;$g = EV::timer 0,10, sub {
+# 	if ($prev == $cnt) {
+# 		# warn "Same";
+# 		if ($last_ac eq 'grow') {
+# 			# warn "Stopped";
+# 			warn sprintf "END[$CONNS:$REQS]; Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+# 			$prev = $cnt = $max = $sum = 0;
+# 			$min = 1e10;
+# 		}
+# 		$last_ac = 'same';
+# 	}
+# 	else {
+# 		# if ($last_ac eq 'same') {
+# 		# 	warn "Start\n";
+# 		# }
+# 		warn sprintf "Grow[$CONNS:$REQS]: %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+# 		$prev = $cnt;
+# 		$last_ac = 'grow';
+# 	}
+# };
+
+
+tcp_server 0, $port, sub {
+	my $fh = shift;
+	# AnyEvent::Util::fh_nonblocking($fh,1);
+	++$CONNS;
+	setsockopt($fh, SOL_SOCKET, SO_LINGER, 0);
+	my $rbuf;
+	my $read_time;
+	my $read_count = 0;
+
+	my $rwcb;
+	my $rw;
+	my ($m, $cap, $met,$path_query,%env);
+
+	my $fin = sub {
+		close $fh;
+		undef $rwcb;
+		undef $rw;
+		--$CONNS;
+	};
+	my $start;
+	my $reply = sub {
+		my ($st,$b, $close) = @_;
+		# warn "$met $path $st: $b\n" if DEBUG > 1;
+		my $con = $close ? 'close':'keep-alive';
+		my $wbuf = "HTTP/1.1 $st X\015\012Server: Perl/5\015\012Connection: $con\015\012Content-Length: ".
+			length($b)."\015\012\015\012".$b;
+		my $wr = syswrite($fh,$wbuf);
+
+		my $run = time - $start;
+		if ( $run > 0.5 ) {
+			warn sprintf "[%s:%s] %s %s?%s:%s %0.4fs (%0.4fs,%s) [%s]\n",
+				$CONNS, $REQS, $met,$env{PATH_INFO}, $env{QUERY_STRING},
+					$st,$run,$read_time,$read_count, $JSONN->encode(\%env);
 		}
-		$last_ac = 'same';
+		$min = min($min,$run);
+		$max = max($max,$run);
+		$sum += $run;
+		$cnt++;
+		--$REQS;
+		my $N = $NAMES{ 0+$m } // 'OTH';
+		$STAT{'C'.$N}++;
+		$STAT{'R'.$N}+= $run;
+		if (LOCAL_TRAIN) {
+			if ($cnt == 3000 or $cnt == 3000+3000 or $cnt == 3000+3000+5000) {
+				warn "STAT $cnt ".do_stat();
+			}
+		}
+		if (RUN_TEST) {
+			if ($cnt == 9030 or $cnt == 9030+3000 or $cnt == 9030+3000+19500) {
+				warn "STAT $cnt ".do_stat();
+			}
+		}
+		if (RUN_PROD) {
+			if ($cnt == 150150 or $cnt == 150150+40000 or $cnt == 150150+40000+630000) {
+				warn "STAT $cnt ".do_stat();
+			}
+		}
+
+
+		if ($wr == length $wbuf) {
+
+		}
+		else {
+			warn "Write failed: $!\n";
+			$fin->();
+			return;
+		}
+		if ($close) {
+			$fin->();
+		} else {
+			%env = ();
+			# undef $start;
+			$start = time;
+			$rw = AE::io $fh, 0, $rwcb;
+		}
+	};
+
+	$rwcb = sub {
+		$start //= time;
+		my $r = sysread($fh, $rbuf, 256*1024, length $rbuf);
+		$read_count++;
+		if ($r) {
+			$read_time = time - $start;
+			my $ret = parse_http_request($rbuf,\%env);
+			# p %env;
+			if ($ret > 0) {
+				$met = $env{REQUEST_METHOD};
+				if ($met eq 'GET') {
+					$rbuf = substr($rbuf, $ret);
+					($m,$cap) = $GET->match($env{PATH_INFO});
+					++$REQS;
+					$m or return $reply->(404, '{"error":"path"}',0);
+					my $query = decode_query($env{QUERY_STRING});
+					$m->( $reply, $cap->{id}, $query );
+					# $reply->(400,'{}',0);
+				}
+				elsif ($met eq 'POST') {
+					if ( $env{CONTENT_LENGTH} + $ret > length $rbuf ) {
+						warn "Not enough body: $env{CONTENT_LENGTH} + $ret < length $rbuf";
+						return $rw = AE::io $fh, 0, $rwcb;
+					}
+					($m,$cap) = $POST->match($env{PATH_INFO});
+					++$REQS;
+					$m or return $reply->(404, '{"error":"path"}', 1);
+					my $body = \substr($rbuf, $ret, $env{CONTENT_LENGTH});
+					$env{body} = $body;
+
+					my $data;
+					eval {
+						$data = $JSON->decode($$body);
+					1} or do {
+						return $reply->(400, '{"error":"bad json"}', 1);
+					};
+					# p $data;
+					my $query = decode_query($env{QUERY_STRING});
+					$m->( $reply, $cap->{id}, $query, $data );
+					# $reply->(400,'{}',1);
+				}
+				else {
+					++$REQS;
+					$reply->(405,'{}',1);
+				}
+				# $rbuf = substr($rbuf);
+			}
+			elsif ($ret == -2) {
+				# warn "Incomplete";
+				return $rw = AE::io $fh, 0, $rwcb;
+			}
+			else {
+				warn "Broken request";
+				return $fin->();
+			}
+		}
+		elsif (defined $r) { # connection closed
+			return $fin->();
+		}
+		elsif ($! == Errno::EAGAIN) {
+			# warn "$!";
+			$rw = AE::io $fh, 0, $rwcb;
+			return;
+		}
+		else {
+			warn "$!";
+			return $fin->();
+		}
+
+	};$rwcb->();
+
+}, sub {
+	my $fh = shift;
+	setsockopt($fh, IPPROTO_TCP, TCP_NODELAY, 1)
+		or warn "setsockopt TCP_NODELAY: $!";
+	# setsockopt($fh, IPPROTO_TCP, TCP_DEFER_ACCEPT, 1)
+	# 	or warn "setsockopt TCP_DEFER_ACCEPT: $!";
+	setsockopt($fh, IPPROTO_TCP, TCP_CORK, 0)
+		or warn "setsockopt TCP_CORK: $!";
+	if (defined &TCP_FASTOPEN) {
+		setsockopt($fh, IPPROTO_TCP, TCP_FASTOPEN(), 10)
+			or warn "setsockopt TCP_FASTOPEN: $!";
 	}
-	else {
-		# if ($last_ac eq 'same') {
-		# 	warn "Start\n";
-		# }
-		warn sprintf "Grow[$CONNS:$REQS]: %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
-		$prev = $cnt;
-		$last_ac = 'grow';
+	if (defined &TCP_QUICKACK) {
+		setsockopt($fh, IPPROTO_TCP, TCP_QUICKACK(), 1)
+			or warn "setsockopt TCP_QUICKACK: $!";
 	}
+	if (defined &TCP_LINGER2) {
+		setsockopt($fh, IPPROTO_TCP, TCP_LINGER2(), 0)
+			or warn "setsockopt TCP_LINGER2: $!";
+	}
+	2048
 };
 
+my $s = EV::signal TERM => sub {
+	warn "Stop";
+	EV::unloop;
+};
+EV::loop;
+exit;
+
+__END__
 tcp_server 0, $port, sub {
 	my $fh = shift;
 	# AnyEvent::Util::fh_nonblocking($fh,1);
