@@ -7,6 +7,8 @@ extern "C" {
 #include "perl.h"
 #include "XSUB.h"
 #include "ppport.h"
+#include <sys/mman.h>	// Needed for mlockall()
+
 #ifdef __cplusplus
 }
 #endif
@@ -83,9 +85,14 @@ else { \
 
 MODULE = Local::HLCup		PACKAGE = Local::HLCup
 
+void mlockall()
+	PPCODE:
+		if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
+			warn("mlockall failed: %s", strerror(errno));
+
 void new(SV *)
 	PPCODE:
-		HLCup * self = (HLCup *) safemalloc( sizeof(HLCup) );
+   		HLCup * self = (HLCup *) safemalloc( sizeof(HLCup) );
 		ST(0) = sv_2mortal(sv_bless(newRV_noinc(newSViv(PTR2IV( self ))), gv_stashpv(SvPV_nolen(ST(0)), TRUE)));
 
 		self->users = new std::map<int,User*>;

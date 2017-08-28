@@ -83,6 +83,8 @@ system("sysctl net.ipv4.tcp_tw_reuse=1");
 system("sysctl net.ipv4.tcp_tw_recycle=1");
 system("sysctl net.ipv4.tcp_slow_start_after_idle=0");
 
+Local::HLCup::mlockall();
+
 BEGIN {
 	eval { Socket->import('TCP_QUICKACK');1} or warn "No TCP_QUICKACK\n";
 	eval { Socket->import('TCP_LINGER2');1}  or warn "No TCP_LINGER2\n";
