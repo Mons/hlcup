@@ -15,7 +15,7 @@ use lib glob("../libs/*/lib"),glob("../libs/*/blib/lib"),glob("../libs/*/blib/ar
 use Time::Moment;
 use EV;
 use Errno;
-use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY TCP_DEFER_ACCEPT TCP_CORK);
+use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY TCP_DEFER_ACCEPT);
 use Router::R3;
 use URI::XSEscape 'uri_unescape';
 use Local::HLCup;
@@ -88,6 +88,7 @@ Local::HLCup::mlockall();
 BEGIN {
 	eval { Socket->import('TCP_QUICKACK');1} or warn "No TCP_QUICKACK\n";
 	eval { Socket->import('TCP_LINGER2');1}  or warn "No TCP_LINGER2\n";
+	eval { Socket->import('TCP_CORK');1}  or warn "No TCP_CORK\n";
 }
 unless (DEBUG) {
 	my $start = time;
@@ -412,7 +413,7 @@ sub update_user {
 
 sub update_location {
 	my ($res,$id,$prm,$data) = @_;
-	return $res->(404,'{}') unless $db->exists_location($id);
+	return $res->(404,'{"error":"not exists"}') unless $db->exists_location($id);
 
 	length $data->{place}
 		or return $res->(400,'{"error":"bad place"}')
@@ -704,8 +705,8 @@ tcp_server 0, $port, sub {
 			$fin->();
 		} else {
 			%env = ();
-			# undef $start;
-			$start = time;
+			undef $start;
+			# $start = time;
 			$rw = AE::io $fh, 0, $rwcb;
 		}
 	};
@@ -736,26 +737,26 @@ tcp_server 0, $port, sub {
 					}
 					($m,$cap) = $POST->match($env{PATH_INFO});
 					++$REQS;
-					$m or return $reply->(404, '{"error":"path"}', 1);
-					my $body = \substr($rbuf, $ret, $env{CONTENT_LENGTH});
-					$env{body} = $body;
+					$m or return $reply->(404, '{"error":"path"}', 0);
+					my $body = substr($rbuf, $ret, $env{CONTENT_LENGTH});
+					# $env{body} = $$body;
+					# p $body;
+					$rbuf = substr($rbuf, $ret + $env{CONTENT_LENGTH});
 
 					my $data;
 					eval {
-						$data = $JSON->decode($$body);
+						$data = $JSON->decode($body);
 					1} or do {
-						return $reply->(400, '{"error":"bad json"}', 1);
+						return $reply->(400, '{"error":"bad json"}', 0);
 					};
 					# p $data;
 					my $query = decode_query($env{QUERY_STRING});
 					$m->( $reply, $cap->{id}, $query, $data );
-					# $reply->(400,'{}',1);
 				}
 				else {
 					++$REQS;
 					$reply->(405,'{}',1);
 				}
-				# $rbuf = substr($rbuf);
 			}
 			elsif ($ret == -2) {
 				# warn "Incomplete";
@@ -787,8 +788,6 @@ tcp_server 0, $port, sub {
 		or warn "setsockopt TCP_NODELAY: $!";
 	# setsockopt($fh, IPPROTO_TCP, TCP_DEFER_ACCEPT, 1)
 	# 	or warn "setsockopt TCP_DEFER_ACCEPT: $!";
-	setsockopt($fh, IPPROTO_TCP, TCP_CORK, 0)
-		or warn "setsockopt TCP_CORK: $!";
 	if (defined &TCP_FASTOPEN) {
 		setsockopt($fh, IPPROTO_TCP, TCP_FASTOPEN(), 10)
 			or warn "setsockopt TCP_FASTOPEN: $!";
@@ -800,6 +799,10 @@ tcp_server 0, $port, sub {
 	if (defined &TCP_LINGER2) {
 		setsockopt($fh, IPPROTO_TCP, TCP_LINGER2(), 0)
 			or warn "setsockopt TCP_LINGER2: $!";
+	}
+	if (defined &TCP_CORK) {
+		setsockopt($fh, IPPROTO_TCP, TCP_CORK(), 0)
+			or warn "setsockopt TCP_CORK: $!";
 	}
 	2048
 };

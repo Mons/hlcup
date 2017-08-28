@@ -9,7 +9,7 @@ use DDP;
 use URI;
 use Test::More;
 use JSON::XS;
-use lib glob("libs/*/lib"),glob("libs/*/blib/lib"),glob("libs/*/blib/arch");
+use lib glob("../libs/*/lib"),glob("../libs/*/blib/lib"),glob("../libs/*/blib/arch");
 use HTTP::Easy::Headers;
 use Time::Moment;
 use Encode qw(decode);

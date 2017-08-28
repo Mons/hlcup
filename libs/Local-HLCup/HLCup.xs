@@ -157,16 +157,17 @@ void update_user(SV *, int id, SV * email, SV * first_name, SV * last_name, char
 
 		XSRETURN_UNDEF;
 
-void exists_user(SV *, int id)
+void exists_user(SV *, SV * id)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		std::map<int, User*>::iterator it = (*self->users).find(id);
-		if ( it != (*self->users).end() ) {
-			ST(0) = &PL_sv_yes;
-			XSRETURN(1);
-		} else {
-			XSRETURN_UNDEF;
+		if (SvOK(id)) {
+			std::map<int, User*>::iterator it = (*self->users).find(SvIV(id));
+			if ( it != (*self->users).end() ) {
+				ST(0) = &PL_sv_yes;
+				XSRETURN(1);
+			}
 		}
+		XSRETURN_UNDEF;
 
 void get_user(SV *, int id)
 	PPCODE:
@@ -267,16 +268,25 @@ void update_location(SV *, int id, int country, SV *distance, SV *city, SV *plac
 		}
 		XSRETURN_UNDEF;
 
-void exists_location(SV *, int id)
+void exists_location(SV *, SV * id)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		std::map<int, Location*>::iterator it = (*self->locations).find(id);
-		if ( it != (*self->locations).end() ) {
-			ST(0) = &PL_sv_yes;
-			XSRETURN(1);
-		} else {
-			XSRETURN_UNDEF;
+		if (SvOK(id)) {
+			// int iid = SvIV(id);
+			std::map<int, Location*>::iterator it = (*self->locations).find(SvIV(id));
+			if ( it != (*self->locations).end() ) {
+				// warn("Searching for %d -> %p", iid, (*it).second);
+				ST(0) = &PL_sv_yes;
+				XSRETURN(1);
+				return;
+			// } else {
+				// warn("Searching for %d -> NOT FOUND", iid);
+			}
+		// } else {
+			// sv_dump(id);
+			// warn("Searching failed: %d/%d (%s)",SvOK(id),SvIOK(id),SvPV_nolen(id));
 		}
+		XSRETURN_UNDEF;
 
 void get_location(SV *, int id)
 	PPCODE:
@@ -480,16 +490,17 @@ void update_visit(SV *, int id, int user, int location, int mark, int visited_at
 
 		XSRETURN_UNDEF;
 
-void exists_visit(SV *, int id)
+void exists_visit(SV *, SV * id)
 	PPCODE:
 		register HLCup *self = ( HLCup * ) SvIV( SvRV( ST(0) ) );
-		std::map<int, Visit*>::iterator it = (*self->visits).find(id);
-		if ( it != (*self->visits).end() ) {
-			ST(0) = &PL_sv_yes;
-			XSRETURN(1);
-		} else {
-			XSRETURN_UNDEF;
+		if (SvOK(id)) {
+			std::map<int, Visit*>::iterator it = (*self->visits).find(SvIV(id));
+			if ( it != (*self->visits).end() ) {
+				ST(0) = &PL_sv_yes;
+				XSRETURN(1);
+			}
 		}
+		XSRETURN_UNDEF;
 
 void get_visit(SV *, int id)
 	PPCODE:
