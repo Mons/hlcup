@@ -14,6 +14,7 @@
 
 #define _GNU_SOURCE
 #include <sys/socket.h>
+#include <netinet/tcp.h>
 
 #include "picohttpparser.h"
 
@@ -158,7 +159,7 @@ static SV *decode_query(char *p, size_t len) {
 	char *nxt;
 	do {
 		char *nxt = strchr(p,'&');
-		if (!nxt) nxt = e;
+		if (!nxt || nxt > e) nxt = e;
 		char *eq = strchr(p,'=');
 		if (!eq || eq > nxt) {
 			(void)hv_store(query_hash,p,nxt-p,&PL_sv_undef,0);
@@ -185,6 +186,7 @@ static SV *decode_query(char *p, size_t len) {
 			}
 			*pv = 0;
 			SvCUR_set(v, pv - SvPVX(v));
+			// sv_dump(v);
 			(void)hv_store(query_hash,p,eq-p,v,0);
 		}
 		p = nxt+1;
@@ -249,8 +251,11 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 	dTHX;
 
 	// warn("Call read %p -> %p from %d (%d:%d)", w, self, self->fd, O_NONBLOCK, fcntl(self->fd, F_GETFL, 0) );
+	// warn("Read to offset %d",self->ruse);
 	int rc = read(self->fd, &self->rbuf[self->ruse], sizeof(self->rbuf)-self->ruse );
+	// int err = errno;
 	// warn("read: %d (%s)",rc,strerror(errno));
+	// errno = err;
 
 	char *method, *path;
 	int pret, minor_version;
@@ -262,7 +267,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 
 
 	if (rc > 0) {
-		prevbuflen = self->ruse;
+		// prevbuflen = self->ruse;
 		self->ruse += rc;
 		ev_io_stop(loop,w);
 		// warn("Received: '%-.*s'\n",self->ruse, self->rbuf);
@@ -274,7 +279,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 			&path, &path_len,
 			&minor_version,
 			headers, &num_headers,
-			prevbuflen
+			0
 		);
 		if (pret > 0) {
 			/* successfully parsed the request */
@@ -284,6 +289,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 			// printf("path is %.*s\n", (int)path_len, path);
 			// printf("HTTP version is 1.%d\n", minor_version);
 			// printf("headers:\n");
+			content_length = 0;
 			for (i = 0; i != num_headers; ++i) {
 				if (header_eq(headers[i], "Content-Length")) {
 					content_length = atol(headers[i].value);
@@ -294,9 +300,11 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 			// warn("Content-Length: %d",content_length);
 			if (self->ruse < pret + content_length) {
 				if (sizeof(self->rbuf) < pret + content_length) {
+					warn("Request too big %d < %d+%d\n",sizeof(self->rbuf),pret,content_length);
 					send_reply(self,413,"Big request\n",strlen("Big request\n"),1);
 					return;
 				}
+				// warn("Delayed by body");
 				ev_io_start( loop, w );
 				return; // want more
 			}
@@ -314,8 +322,6 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 			}
 			self->ruse -= pret + content_length;
 			assert(self->ruse < 0);
-			if (self->ruse > 0)
-				memmove(self->rbuf,self->rbuf+pret+content_length,self->ruse);
 
 			SV *sv_met = sv_2mortal(newSVpvn(method, method_len));
 			path_len = find_ch(path, path_len, '#');
@@ -331,6 +337,8 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 				sv_query = &PL_sv_undef;
 			}
 			// sv_dump(query);
+			if (self->ruse > 0)
+				memmove(self->rbuf,self->rbuf+pret+content_length,self->ruse);
 
 			PUSHMARK(SP);
 			EXTEND(SP, 4);
@@ -386,7 +394,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 				ev_io_start( loop, w );
 				return;
 			case ECONNRESET:
-				if (self->ruse) {
+				if (self->ruse > 2) {
 					warn("connection failed: %s (%d), have %d buf", strerror(errno), errno, self->ruse);
 				}
 				free_conn(self);
@@ -398,7 +406,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 		}
 	}
 	else {
-		if (self->ruse) {
+		if (self->ruse > 2) {
 			warn("EOF while have %d buffer\n", self->ruse);
 		}
 		ev_io_stop(loop,w);
@@ -473,11 +481,23 @@ void listen(SV *, ...)
 		self->loop = EV_DEFAULT;
 
 		int yes = 1;
+		int no = 0;
 		if ( setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1 ) {
  			croak("setsockopt SO_REUSEADDR failed: %s", strerror(errno));
 		}
-		// TODO: other setsockopt's
-
+		if ( setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int)) == -1 ) {
+ 			croak("setsockopt IPPROTO_TCP, TCP_NODELAY failed: %s", strerror(errno));
+		}
+#ifdef TCP_QUICKACK
+		if ( setsockopt(s, IPPROTO_TCP, TCP_QUICKACK, &yes, sizeof(int)) == -1 ) {
+ 			croak("setsockopt IPPROTO_TCP, TCP_QUICKACK failed: %s", strerror(errno));
+		}
+#endif
+#ifdef TCP_LINGER2
+		if ( setsockopt(s, IPPROTO_TCP, TCP_LINGER2, &no, sizeof(int)) == -1 ) {
+ 			croak("setsockopt IPPROTO_TCP, TCP_LINGER2 failed: %s", strerror(errno));
+		}
+#endif
 		if (nonblocking(s))
 			croak("fcntl F_SETFL O_NONBLOCK failed: %s", strerror(errno));
 
