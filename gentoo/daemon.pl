@@ -20,6 +20,7 @@ use Router::R3;
 use URI::XSEscape 'uri_unescape';
 use Local::HLCup;
 use HTTP::Parser::XS qw(parse_http_request);
+use Local::QueryString qw(decode_query);
 
 ##################################################
 
@@ -568,19 +569,19 @@ our %NAMES = (
 	0+\&update_visit     => "UV",
 );
 
-sub decode_query {
-	my %rv;
-	return \%rv unless length $_[0];
-	for (split '&', $_[0]) {
-		my ($k,$v) = split '=', $_, 2;
-		$k = uri_unescape($k =~ s/\+/ /sr);
-		$v = uri_unescape($v =~ s/\+/ /sr);
-		utf8::decode $k;
-		utf8::decode $v;
-		$rv{ $k } = $v;
-	}
-	return \%rv;
-}
+# sub decode_query {
+# 	my %rv;
+# 	return \%rv unless length $_[0];
+# 	for (split '&', $_[0]) {
+# 		my ($k,$v) = split '=', $_, 2;
+# 		$k = uri_unescape($k =~ s/\+/ /sr);
+# 		$v = uri_unescape($v =~ s/\+/ /sr);
+# 		utf8::decode $k;
+# 		utf8::decode $v;
+# 		$rv{ $k } = $v;
+# 	}
+# 	return \%rv;
+# }
 
 use AnyEvent::Socket;
 
@@ -632,7 +633,7 @@ sub do_stat {
 # 		$last_ac = 'grow';
 # 	}
 # };
-
+DB::enable_profile() if defined &DB::enable_profile;
 
 tcp_server 0, $port, sub {
 	my $fh = shift;
