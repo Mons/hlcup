@@ -3,3 +3,5 @@ Makefile.PL
 MANIFEST
 ppport.h
 lib/Local/HTTPServer.pm
+picohttpparser.h
+picohttpparser.c

@@ -1,6 +1,6 @@
 package Local::HTTPServer;
 
-use 5.018002;
+use 5.016;
 use strict;
 use warnings;
 
