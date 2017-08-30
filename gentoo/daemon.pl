@@ -15,43 +15,78 @@ use lib glob("../libs/*/lib"),glob("../libs/*/blib/lib"),glob("../libs/*/blib/ar
 use Time::Moment;
 use EV;
 use Errno;
-use Socket qw(SOL_SOCKET SO_LINGER IPPROTO_TCP TCP_NODELAY);
-use Router::R3;
-use URI::XSEscape 'uri_unescape';
+use Local::HLCup;
+use Local::HTTPServer;
 
 ##################################################
-
 
 my $port;
 my $debug;
 my $src;
+my $options;
+our $DST;
+our $NOW;
+
+my $mode_local_train;
+my $mode_run_test;
+my $mode_run_prod;
+
 BEGIN {
+	$options = '/tmp/data/options.txt';
+	$DST = '/tmp/unpacked';
 	$port = 80;
 	$src = 'TRAIN';
 	GetOptions(
 		'p|port=n' => \$port,
 		'd|debug+' => \$debug,
 		's|source=s' => \$src,
+		'o|options=s' => \$options,
 	) or die;
+	if ($debug) {
+		$DST = "hlcupdocs/data/$src/data";
+		$options = "hlcupdocs/data/$src/data/options.txt";
+		$mode_local_train = 1 if $src eq 'TRAIN';
+	}
+	my $mode;
+	if (open my $f, $options) {
+		$NOW = 0+<$f>;
+		$mode = 0+<$f>;
+		close $f;
+		warn "Loaded time = $NOW, mode = $mode from $options\n";
+	}
+	else {
+		warn "$options: $!\n";
+	}
+	$mode_run_test = $mode == 0;
+	$mode_run_prod = $mode == 1;
 }
 use constant DEBUG => $debug;
+use constant LOCAL_TRAIN => $mode_local_train;
+use constant RUN_TEST => $mode_run_test;
+use constant RUN_PROD => $mode_run_prod;
+
 our $JSON = JSON::XS->new->utf8;
 our $JSONN = JSON::XS->new->utf8->allow_nonref;
 
 warn `cat /proc/cpuinfo | egrep 'model name|bogomips' | head -n2`;
 system("ulimit -n 200000");
+
+system("sysctl net.ipv4.tcp_fin_timeout");
+system("sysctl net.ipv4.tcp_tw_reuse");
+system("sysctl net.ipv4.tcp_tw_recycle");
+
 system("sysctl net.ipv4.tcp_tw_reuse=1");
+system("sysctl net.ipv4.tcp_tw_recycle=1");
 system("sysctl net.ipv4.tcp_slow_start_after_idle=0");
+
+Local::HLCup::mlockall();
 
 BEGIN {
 	eval { Socket->import('TCP_QUICKACK');1} or warn "No TCP_QUICKACK\n";
 	eval { Socket->import('TCP_LINGER2');1}  or warn "No TCP_LINGER2\n";
+	eval { Socket->import('TCP_CORK');1}  or warn "No TCP_CORK\n";
 }
-our $DST = '/tmp/unpacked';
-if (DEBUG) {
-	$DST = "hlcupdocs/data/$src/data";
-}
-else {
+unless (DEBUG) {
 	my $start = time;
 	system("unzip -o /tmp/data/data.zip -d $DST/ >/dev/null 2>/dev/null")
 		== 0 or die "Failed to unpack: $?";
@@ -61,7 +96,7 @@ else {
 
 sub aefor($$$$;$);
 
-my @targets = qw(logger worker heater monitor);
+my @targets = qw(logger worker  ); # heater monitor
 my %chld;
 END{ kill KILL => $_ for keys %chld };
 my $logger;
@@ -150,65 +185,41 @@ sub worker {
 }
 WORKER:
 
-sub aefor($$$$;$) {
-	my $fin = pop;
-	my $cb = pop;
-	my ($from,$to,$steps) = @_;
-	if ($to >= $from) {
-		$steps //= 50;
-		my $i = $from;
-		my $step;$step = sub {
-			local $_ = $i;
-			my $iter_end = $i+$steps;
-			$iter_end = $to if $iter_end > $to;
-			while () {
-				&$cb;
-			}
-			continue {
-				$_++;
-				if ($_ > $iter_end) {
-					last if $_ > $to;
-					$i = $_;
-					&AE::postpone($step);
-					return;
-				}
-			}
-			undef $step;
-			&$fin;
-		};$step->();
-	} else {
-		$_ = $from;
-		&$fin;
-	}
-}
+my $db = Local::HLCup->new();
 
-our @USERS;
-$#USERS = 110000;
-our %COUNTRIES; our $COUNTRY_MAX=0; # by name
-keys (%COUNTRIES) = 200;
-our @COUNTRY_ID;
-$#COUNTRY_ID = 200;
-our @LOCATIONS;
-$#LOCATIONS = 110000;
-our @VISITS;
-$#VISITS = 1100000;
-our @USER_VISITS;
-$#USER_VISITS = 110000;
-our @LOCATION_VISITS;
-$#LOCATION_VISITS = 110000;
+# $SIG{__DIE__} = sub {
+# 	warn "@_";
+# };
+$EV::DIED = sub {
+	warn "@_/$@";
+};
+
+# our @USERS;
+# $#USERS = 110000;
+# our %COUNTRIES; our $COUNTRY_MAX=0; # by name
+# keys (%COUNTRIES) = 200;
+# our @COUNTRY_ID;
+# $#COUNTRY_ID = 200;
+# our @LOCATIONS;
+# $#LOCATIONS = 110000;
+# our @VISITS;
+# $#VISITS = 1100000;
+# our @USER_VISITS;
+# $#USER_VISITS = 110000;
+# our @LOCATION_VISITS;
+# $#LOCATION_VISITS = 110000;
 our %STAT;
 
-sub get_country($) {
-	my $key = shift;
-	my $country = $COUNTRIES{ $key } ||= do {
-		my $id = ++$COUNTRY_MAX;
-		$COUNTRY_ID[$id] = { id => $id, name => $key };
-	};
-	return $country->{id};
-}
+# sub get_country($) {
+# 	my $key = shift;
+# 	my $country = $COUNTRIES{ $key } ||= do {
+# 		my $id = ++$COUNTRY_MAX;
+# 		$COUNTRY_ID[$id] = { id => $id, name => $key };
+# 	};
+# 	return $country->{id};
+# }
 
 
-our $NOW;
 ################ Loading DATA
 {
 	my ($start,$count);
@@ -217,9 +228,8 @@ our $NOW;
 	for my $f (<$DST/users_*.json>) {
 		$NOW //= (stat($f))[9];
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{users}};
-		# warn sprintf "Loading %d users from %s\n",0+@$data,$f;
 		for my $u (@$data) {
-			$USERS[$u->{id}] = $u;
+			$db->add_user(@{ $u }{qw( id email first_name last_name gender birth_date)});
 			++$count;
 		}
 	}
@@ -228,531 +238,260 @@ our $NOW;
 	$start = time; $count = 0;
 	for my $f (<$DST/locations_*.json>) {
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{locations}};
-		# warn sprintf "Loading %d locations from %s\n",0+@$data,$f;
-		for my $l (@$data) {
-			# p $l unless %COUNTRIES;
-			$l->{country} = get_country $l->{country};
+		for my $loc (@$data) {
+			$loc->{country} = $db->get_country($loc->{country});
 			++$count;
-			$LOCATIONS[$l->{id}] = $l;
+			$db->add_location($loc->{id},$db->get_country($loc->{country}), @{$loc}{ qw(distance city place) });
 		}
 	}
-	# p %COUNTRIES;
-	warn sprintf "Loaded %d locations in %0.4fs, found %d countries\n", $count, time-$start, 0+keys %COUNTRIES;
+	warn sprintf "Loaded %d locations in %0.4fs\n", $count, time-$start;
 
 	$start = time; $count = 0;
 	for my $f (<$DST/visits_*.json>) {
 		my $data = do { open my $fl, '<:raw', $f or die "$!"; local $/; $JSON->decode(<$fl>)->{visits}};
-		# warn sprintf "Loading %d visits from %s\n",0+@$data,$f;
-		for my $v (@$data) {
-			my $loc = $LOCATIONS[$v->{location}];
-			my $usr = $USERS[$v->{user}];
-			$VISITS[$v->{id}] = $v;
-			my $uvl = {
-				user => $usr,
-				visit => $v,
-				location => $loc,
-			};
-
-			push @{ $USER_VISITS[ $v->{user} ] },         $uvl;
-			push @{ $LOCATION_VISITS[ $v->{location} ] }, $uvl;
-
+		for my $vis (@$data) {
+			$db->add_visit(@{$vis}{qw(id user location mark visited_at)});
 			++$count;
 		}
 	}
 	warn sprintf "Loaded %d visits in %0.4fs\n", $count, time-$start;
-
-	$start = time;
-	my $max1 = 0;
-	my $id1;
-	for my $visits (@LOCATION_VISITS) {
-		$visits or next;
-		@$visits = sort {
-			$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-		} @$visits;
-		if (0+@$visits > $max1) {
-			$max1 = 0+@$visits;
-			$id1 = $visits->[0]{location}{id};
-		}
-	}
-	my $max2 = 0;
-	my $id2;
-	for my $visits (@USER_VISITS) {
-		$visits or next;
-		@$visits = sort {
-			$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-		} @$visits;
-		if (0+@$visits > $max2) {
-			$max2 = 0+@$visits;
-			$id2 = $visits->[0]{location}{id};
-		}
-	}
-	warn sprintf "Sorted %d visits in %0.4fs, max_loc: %s (%s), max_usr: %s (%s)\n", $count, time-$start, $max1, $id1, $max2, $id2;
 	$NOW //= time;
 }
+warn mystat(),"\n";
+AE::now_update();
 $NOW = Time::Moment->from_epoch($NOW);
 ################ Loaded DATA
 
-sub get_user {
-	my ($res,$id,$q) = @_;
-	my $user = $USERS[$id] or return $res->(404,'{}');
-	return $res->(200, $JSON->encode({
-		id           => 0+$user->{id},
-		email        => $user->{email},
-		gender       => $user->{gender},
-		first_name   => $user->{first_name},
-		last_name    => $user->{last_name},
-		birth_date   => 0+$user->{birth_date},
-	}));
-}
-
-sub get_visit {
-	my ($res,$id,$q) = @_;
-	my $visit = $VISITS[$id] or return $res->(404,'{}');
-	return $res->(200, $JSON->encode({
-		id          => 0+$visit->{id},
-		location    => 0+$visit->{location},
-		user        => 0+$visit->{user},
-		visited_at  => 0+$visit->{visited_at},
-		mark        => 0+$visit->{mark},
-	}));
-}
-
-sub get_location {
-	my ($res,$id,$q) = @_;
-	my $loc = $LOCATIONS[$id] or return $res->(404,'{}');
-	my $ret = {
-		id       => 0+$loc->{id},
-		country  => $COUNTRY_ID[$loc->{country}]{name},
-		city     => $loc->{city},
-		distance => 0+$loc->{distance},
-		place    => $loc->{place},
-	};
-	return $res->(200, $JSON->encode($ret));
-}
-
-sub get_user_visits {
-	my ($res,$id,$prm) = @_;
-	my $user = $USERS[$id] or return $res->(404,'{}');
-
-	# p $prm;
-	my @cond;
-	if (exists $prm->{fromDate}) {
-		return $res->(400,'{}') unless $prm->{fromDate} =~ /^\d+$/;
-		push @cond, "\$_->{visit}{visited_at} >= $prm->{fromDate}";
-	}
-	if (exists $prm->{toDate}) {
-		return $res->(400,'{}') unless $prm->{toDate} =~ /^\d+$/;
-		push @cond, "\$_->{visit}{visited_at} <= $prm->{toDate}";
-	}
-	if (exists $prm->{country}) {
-		my $country = $COUNTRIES{ $prm->{country} };
-		return $res->(400,'{"error":"Bad country"}') unless $country;
-		push @cond, "\$_->{location}{country} == $country->{id}";
-	}
-	if (exists $prm->{toDistance}) {
-		return $res->(400,'{}') unless $prm->{toDistance} =~ /^\d+$/;
-		push @cond, "\$_->{location}{distance} < $prm->{toDistance}";
-	}
-
-	my $all = $USER_VISITS[ $id ]
-		or return $res->(200, '{"visits":[]}');
-
-	my @visits;
-	my $filter;
-	if (@cond) {
-		my $body = 'sub{'.join(' and ', @cond).'}';
-		$filter = eval $body or die $@;
-	}
-	for($filter ? grep &$filter, @$all : @$all ) {
-		push @visits, {
-			mark       => 0+$_->{visit}{mark},
-			visited_at => 0+$_->{visit}{visited_at},
-			place      => $_->{location}{place},
-		};
-	}
-	return $res->(200, $JSON->encode({
-		visits => \@visits,
-	}));
-}
 sub get_location_avg {
-	my ($res,$id,$prm) = @_;
-	my $loc = $LOCATIONS[$id] or return $res->(404,'{}');
+	my ($id,$prm) = @_;
 
-	my @cond;
+	my $from = 0;
+	my $till = 2**31-1;
+	my $from_age = 2**31-1;
+	my $till_age = -2**31;
+	my $gender;
+
 	if (exists $prm->{fromDate}) {
-		return $res->(400,'{}') unless $prm->{fromDate} =~ /^\d+$/;
-		push @cond, "\$_->{visit}{visited_at} >= $prm->{fromDate}";
+		return 400,'{}' unless $prm->{fromDate} =~ /^\d+$/;
+		$from = $prm->{fromDate};
 	}
 	if (exists $prm->{toDate}) {
-		return $res->(400,'{}') unless $prm->{toDate} =~ /^\d+$/;
-		push @cond, "\$_->{visit}{visited_at} <= $prm->{toDate}";
+		return 400,'{}' unless $prm->{toDate} =~ /^\d+$/;
+		$till = $prm->{toDate};
 	}
 
 	if (exists $prm->{fromAge}) {
-		return $res->(400,'{}') unless $prm->{fromAge} =~ /^\d+$/;
-		my $older = $NOW->minus_years( $prm->{fromAge} )->epoch;
-		push @cond, "\$_->{user}{birth_date} <= $older";
+		return 400,'{}' unless $prm->{fromAge} =~ /^\d+$/;
+		$from_age = $NOW->minus_years( $prm->{fromAge} )->epoch;
 	}
 	if (exists $prm->{toAge}) {
-		return $res->(400,'{}') unless $prm->{toAge} =~ /^\d+$/;
-		my $younger = $NOW->minus_years( $prm->{toAge} )->epoch;
-		push @cond, "\$_->{user}{birth_date} > $younger";
+		return 400,'{}' unless $prm->{toAge} =~ /^\d+$/;
+		$till_age = $NOW->minus_years( $prm->{toAge} )->epoch;
 	}
 	if (exists $prm->{gender}) {
-		return $res->(400,'{}') unless $prm->{gender} =~ /^(f|m)$/;
-		push @cond, "\$_->{user}{gender} eq '$prm->{gender}'";
+		return 400,'{}' unless $prm->{gender} =~ /^(f|m)$/;
+		$gender = $prm->{gender};
 	}
 
-	my $all = $LOCATION_VISITS[ $id ]
-		or return $res->(200, '{"avg": 0}');
+	return $db->get_location_avg($id,$from,$till,$till_age,$from_age,$gender);
+}
 
-	my $sum = 0;
-	my $cnt = 0;
-	my $filter;
-	if (@cond) {
-		my $body = 'sub{'.join(' and ', @cond).'}';
-		$filter = eval $body or die $@;
+sub get_location_visits {
+	my ($id,$prm) = @_;
+
+	my $from = 0;
+	my $till = 2**31-1;
+	my $from_age = 2**31-1;
+	my $till_age = -2**31;
+	my $gender;
+
+	if (exists $prm->{fromDate}) {
+		return 400,'{}' unless $prm->{fromDate} =~ /^\d+$/;
+		$from = $prm->{fromDate};
 	}
-	for ( $filter ? grep &$filter, @$all : @$all ) {
-		$sum += $_->{visit}{mark};
-		$cnt++;
+	if (exists $prm->{toDate}) {
+		return 400,'{}' unless $prm->{toDate} =~ /^\d+$/;
+		$till = $prm->{toDate};
 	}
-	return $res->(200, $JSON->encode({
-		avg => $cnt && (int($sum/$cnt*1e5+0.5)/1e5) || 0,
-	}))
+
+	if (exists $prm->{fromAge}) {
+		return 400,'{}' unless $prm->{fromAge} =~ /^\d+$/;
+		$from_age = $NOW->minus_years( $prm->{fromAge} )->epoch;
+	}
+	if (exists $prm->{toAge}) {
+		return 400,'{}' unless $prm->{toAge} =~ /^\d+$/;
+		$till_age = $NOW->minus_years( $prm->{toAge} )->epoch;
+	}
+	if (exists $prm->{gender}) {
+		return 400,'{}' unless $prm->{gender} =~ /^(f|m)$/;
+		$gender = $prm->{gender};
+	}
+
+	my $rv = $db->get_location_visits($id,$from,$till,$till_age,$from_age,$gender)
+		or return 404,'{}';
+	return 200, JSON::XS->new->utf8->pretty->encode($rv);
+
 }
 
 sub update_user {
-	my ($res,$id,$prm,$data) = @_;
-	my $user = $USERS[$id] or return $res->(404,'{}');
+	my ($id,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+
+	return 404,'{}' unless $db->exists_user($id);
+
 	length $data->{email} and length $data->{email} < 100
-		or return $res->(400,'{"error":"bad email"}')
+		or return 400,'{"error":"bad email"}'
 		if exists $data->{email};
 	$data->{birth_date} =~ /^-?\d+$/
-		or return $res->(400,'{"error":"bad birth_date"}')
+		or return 400,'{"error":"bad birth_date"}'
 		if exists $data->{birth_date};
 	$data->{gender} =~ /^(f|m)$/
-		or return $res->(400,'{"error":"bad gender"}')
+		or return 400,'{"error":"bad gender"}'
 		if exists $data->{gender};
 	length $data->{first_name} and length $data->{first_name} < 50
-		or return $res->(400,'{"error":"bad first_name"}')
+		or return 400,'{"error":"bad first_name"}'
 		if exists $data->{first_name};
 	length $data->{last_name} and length $data->{last_name} < 50
-		or return $res->(400,'{"error":"bad last_name"}')
+		or return 400,'{"error":"bad last_name"}'
 		if exists $data->{last_name};
 
-	$res->("200",'{}');
-
-	$user->{email}      = $data->{email}      if exists $data->{email};
-	$user->{birth_date} = $data->{birth_date} if exists $data->{birth_date};
-	$user->{gender}     = $data->{gender}     if exists $data->{gender};
-	$user->{first_name} = $data->{first_name} if exists $data->{first_name};
-	$user->{last_name}  = $data->{last_name}  if exists $data->{last_name};
-
-	return;
+	AE::postpone {
+		$db->update_user($id, @{ $data }{qw( email first_name last_name gender birth_date)});
+	};
+	return "200",'{}';
 }
+
 sub update_location {
-	my ($res,$id,$prm,$data) = @_;
-	# if ($id == 123) {
-	# 	warn "[[$id]]: ".$JSON->encode([$prm,$data,$LOCATIONS{$id}]);
-	# }
-	my $loc = $LOCATIONS[$id] or return $res->(404,'{}');
+	my ($id,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+	return 404,'{"error":"not exists"}' unless $db->exists_location($id);
 
 	length $data->{place}
-		or return $res->(400,'{"error":"bad place"}')
+		or return 400,'{"error":"bad place"}'
 		if exists $data->{place};
 
-	length $data->{country} and length $data->{country} < 50
-		or return $res->(400,'{"error":"bad country"}')
-		if exists $data->{country};
-
 	length $data->{city} and length $data->{city} < 50
-		or return $res->(400,'{"error":"bad city"}')
+		or return 400,'{"error":"bad city"}'
 		if exists $data->{city};
 
 	$data->{distance} =~ /^\d+$/
-		or return $res->(400,'{"error":"bad distance"}')
+		or return 400,'{"error":"bad distance"}'
 		if exists $data->{distance};
 
-	$res->("200",'{}');
-
-	$loc->{place} = $data->{place} if exists $data->{place};
-	$loc->{distance} = $data->{distance} if exists $data->{distance};
-	$loc->{city} = $data->{city} if exists $data->{city};
-	$loc->{country} = get_country $data->{country} or die "No country" if exists $data->{country};
-
-	return;
+	if (exists $data->{country}) {
+		length $data->{country} and length $data->{country} < 50
+			or return 400,'{"error":"bad country"}'
+			;
+		$data->{country} = $db->get_country($data->{country});
+	}
+	AE::postpone {
+		$db->update_location($id, @{$data}{qw(country distance city place) });
+	};
+	return 200,'{}';
 }
 
 sub update_visit {
-	my ($res,$id,$prm,$data) = @_;
-	my $vis = $VISITS[$id] or return $res->(404,'{}');
+	my ($id,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+	return 404,'{}' unless $db->exists_visit($id);
 
 	$data->{mark} =~ /^[0-5]$/
-		or return $res->(400,'{"error":"bad mark"}')
+		or return 400,'{"error":"bad mark"}'
 		if exists $data->{mark};
-
-	my $resort_loc;
-	my $resort_usr;
 
 	if (exists $data->{visited_at}) {
 		$data->{visited_at} =~ /^\d+$/
-			or return $res->(400,'{"error":"bad visited_at"}');
-		$resort_loc = 1;
-		$resort_usr = 1;
-	}
-	my $loc;
-	my $user;
-
-
-	if (exists $data->{location} and $vis->{location} != $data->{location}) {
-		$loc = $LOCATIONS[$data->{location}] or return $res->(400,'{"error":"bad location"}');
-		$resort_loc = 0;
-	}
-	if (exists $data->{user} and $vis->{user} != $data->{user}) {
-		$user = $USERS[$data->{user}] or return $res->(400,'{"error":"bad user"}');
-		$resort_usr = 0;
-	}
-	$res->(200,'{}');
-
-	$vis->{mark} = $data->{mark} if exists $data->{mark};
-	$vis->{visited_at} = $data->{visited_at} if exists $data->{visited_at};
-
-	if ($loc) {
-		my $cond;
-		# if ($vis->{location} == 935 or $data->{location} == 935) {
-		# 	p $vis;
-		# 	p $data;
-		# 	$cond = 1;
-		# }
-		my $oldv = $vis->{location};
-		my $newv = $data->{location};
-
-		my $old = $LOCATION_VISITS[ $vis->{location} ];
-		my $new = $LOCATION_VISITS[ $data->{location} ] //= [];
-
-		# dump_visits "Before", $old if DEBUG and $cond;
-		$vis->{location} = $data->{location};
-		my $ptr;
-
-		# p $new if $cond;
-
-		aefor 0, $#$old, sub {
-			if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-				# warn "rem $_" if $cond;
-				$ptr = splice @$old, $_,1, ();
-				last;
-			}
-		}, sub {
-			aefor 0, $#$new, sub {
-				# warn "$_: $new->[$_]{visit}{visited_at} > $vis->{visited_at}" if $cond;
-				last if $new->[$_]{visit}{visited_at} > $vis->{visited_at};
-			}, sub {
-				# warn "psh $_" if $cond;
-				splice @$new,$_, 0, $ptr;
-				$ptr->{location} = $loc;
-			};
-		};
-
-
-		# for ( 0..$#$old ) {
-		# 	if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-		# 		# warn "rem $_" if $cond;
-		# 		$ptr = splice @$old, $_,1, ();
-		# 		last;
-		# 	}
-		# }
-		# my $pos;
-		# for ($pos = 0; $pos < @$new; $pos++ ) {
-		# 	last if $new->[$pos]{visit}{visited_at} > $vis->{visited_at};
-		# }
-		# # warn "psh $pos" if $cond;
-		# splice @$new,$pos, 0, $ptr;
-		# $ptr->{location} = $loc;
+			or return 400,'{"error":"bad visited_at"}'
 	}
 
-
-	if ($user) {
-		my $old = $USER_VISITS[ $vis->{user} ];
-		my $new = $USER_VISITS[ $data->{user} ] //= [];
-		$vis->{user} = $data->{user};
-		my $ptr;
-
-		aefor 0,$#$old, sub {
-			if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-				$ptr = splice @$old, $_,1, ();
-				last;
-			}
-		}, sub {
-			aefor 0, $#$new, sub {
-				last if $new->[$_]{visit}{visited_at} > $vis->{visited_at};
-			},
-			sub {
-				splice @$new,$_, 0, $ptr;
-				$ptr->{user} = $user;
-			};
-		};
-
-		# for ( 0..$#$old ) {
-		# 	if ( $old->[$_]{visit}{id} == $vis->{id} ) {
-		# 		$ptr = splice @$old, $_,1, ();
-		# 		last;
-		# 	}
-		# }
-		# for ($pos = 0; $pos < @$new; $pos++ ) {
-		# 	last if $new->[$pos]{visit}{visited_at} > $vis->{visited_at};
-		# }
-		# splice @$new,$pos, 0, $ptr;
-		# $ptr->{user} = $user;
+	if (exists $data->{location}) {
+		return 400,'{"error":"bad location"}'
+			if $data->{location} !~ /^\d+$/ or !$db->exists_location($data->{location});
 	}
-
-
-	if ($resort_usr) {
-		AE::postpone {
-			my $visits = $USER_VISITS[ $vis->{user} ];
-			@$visits = sort {
-				$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-			} @$visits;
-		};
+	if (exists $data->{user}) {
+		return 400,'{"error":"bad user"}'
+			if $data->{user} !~ /^\d+$/ or !$db->exists_user($data->{user});
 	}
-	if ($resort_loc) {
-		AE::postpone {
-			my $visits = $LOCATION_VISITS[ $vis->{location} ];
-			@$visits = sort {
-				$a->{visit}{visited_at} <=> $b->{visit}{visited_at}
-			} @$visits;
-		};
-	}
+	AE::postpone {
+		$db->update_visit($id, $data->{user}, $data->{location}, $data->{mark} // -1, $data->{visited_at} );
+	};
+	return 200,'{}';
 }
 
 sub create_user {
-	my ($res,undef,$prm,$data) = @_;
-	($data->{id} !~ /^\d+$/ or $USERS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
+	my (undef,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+	if ($data->{id} !~ /^\d+$/ or $db->exists_user($data->{id})) {
+		return 400,'{"error":"bad id"}';
+	}
 
 	length $data->{email} and length $data->{email} < 100
-		or return $res->(400,'{"error":"bad email"}')
+		or return 400,'{"error":"bad email"}'
 		;
 	$data->{birth_date} =~ /^-?\d+$/
-		or return $res->(400,'{"error":"bad birth_date"}')
+		or return 400,'{"error":"bad birth_date"}'
 		;
 	$data->{gender} =~ /^(f|m)$/
-		or return $res->(400,'{"error":"bad gender"}')
+		or return 400,'{"error":"bad gender"}'
 		;
 	length $data->{first_name} and length $data->{first_name} < 50
-		or return $res->(400,'{"error":"bad first_name"}')
+		or return 400,'{"error":"bad first_name"}'
 		;
 	length $data->{last_name} and length $data->{last_name} < 50
-		or return $res->(400,'{"error":"bad last_name"}')
+		or return 400,'{"error":"bad last_name"}'
 		;
-
-	$res->("200",'{}');
-	$USERS[ $data->{id} ] = $data;
-	return;
+	AE::postpone {
+		$db->add_user(@{ $data }{qw( id email first_name last_name gender birth_date)});
+	};
+	return "200",'{}';
 }
 
 sub create_location {
-	my ($res,undef,$prm,$data) = @_;
-	($data->{id} !~ /^\d+$/ or $LOCATIONS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
+	my (undef,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+	if ($data->{id} !~ /^\d+$/ or $db->exists_location($data->{id})) {
+		return 400,q|{"error":"bad id"}|;
+	}
 
 	length $data->{place}
-		or return $res->(400,'{"error":"bad place"}')
+		or return 400,'{"error":"bad place"}'
 		;
 
 	length $data->{country} and length $data->{country} < 50
-		or return $res->(400,'{"error":"bad country"}')
+		or return 400,'{"error":"bad country"}'
 		;
 
 	length $data->{city} and length $data->{city} < 50
-		or return $res->(400,'{"error":"bad city"}')
+		or return 400,'{"error":"bad city"}'
 		;
 
 	$data->{distance} =~ /^\d+$/
-		or return $res->(400,'{"error":"bad distance"}')
+		or return 400,'{"error":"bad distance"}'
 		;
-	$res->("200",'{}');
-	$data->{country} = get_country $data->{country};
-	$LOCATIONS[$data->{id}] = $data;
-	return;
+	AE::postpone {
+		$db->add_location($data->{id},$db->get_country($data->{country}), @{$data}{ qw(distance city place) });
+	};
+	return "200",'{}';
 }
 
 sub create_visit {
-	my ($res,undef,$prm,$data) = @_;
-	my $loc = $LOCATIONS[$data->{location}] or return $res->(400,'{"error":"bad location"}');
-	my $usr = $USERS[$data->{user}] or return $res->(400,'{"error":"bad user"}');
-	($data->{id} !~ /^\d+$/ or $VISITS[$data->{id}]) and return $res->(400,'{"error":"bad id"}');
-	$data->{mark} =~ /^[0-5]$/ or return $res->(400,'{"error":"bad mark"}');
-	$data->{visited_at} =~ /^\d+$/ or return $res->(400,'{"error":"bad visited_at"}');
-
-	$res->(200,'{}');
-	$VISITS[$data->{id}] = $data;
-
-	AE::postpone {
-		my $uvl = {
-			user => $usr,
-			visit => $data,
-			location => $loc,
-		};
-
-		my $uv = $USER_VISITS[ $data->{user} ] //= [];
-		my $lv = $LOCATION_VISITS[ $data->{location} ] //= [];
-
-		my $pos;
-		for ($pos = 0; $pos < @$lv; $pos++) {
-			last if $lv->[$pos]{visit}{visited_at} > $data->{visited_at};
-		}
-		splice @$lv,$pos,0,$uvl;
-
-		for ($pos = 0; $pos < @$uv; $pos++) {
-			last if $uv->[$pos]{visit}{visited_at} > $data->{visited_at};
-		}
-		splice @$uv,$pos,0,$uvl;
-	};
-
-	return;
-}
-
-my $GET = Router::R3->new(
-	'/users/{id:\d+}'         => \&get_user,
-	'/visits/{id:\d+}'        => \&get_visit,
-	'/locations/{id:\d+}'     => \&get_location,
-	'/users/{id:\d+}/visits'  => \&get_user_visits,
-	'/locations/{id:\d+}/avg' => \&get_location_avg,
-);
-my $POST = Router::R3->new(
-	'/users/new'              => \&create_user,
-	'/locations/new'          => \&create_location,
-	'/visits/new'             => \&create_visit,
-	'/users/{id:\d+}'         => \&update_user,
-	'/locations/{id:\d+}'     => \&update_location,
-	'/visits/{id:\d+}'        => \&update_visit,
-);
-
-our %NAMES = (
-	0+\&get_user         => "GU",
-	0+\&get_visit        => "GV",
-	0+\&get_location     => "GL",
-	0+\&get_user_visits  => "GUV",
-	0+\&get_location_avg => "GLA",
-	0+\&create_user      => "CU",
-	0+\&create_location  => "CL",
-	0+\&create_visit     => "CV",
-	0+\&update_user      => "UU",
-	0+\&update_location  => "UL",
-	0+\&update_visit     => "UV",
-);
-
-sub decode_query {
-	my %rv;
-	return \%rv unless length $_[0];
-	for (split '&', $_[0]) {
-		my ($k,$v) = split '=', $_, 2;
-		$k = uri_unescape($k =~ s/\+/ /sr);
-		$v = uri_unescape($v =~ s/\+/ /sr);
-		utf8::decode $k;
-		utf8::decode $v;
-		$rv{ $k } = $v;
+	my (undef,$prm,$data) = @_;
+	eval { $data = $JSON->decode($data);1} or return 400, '{"error":"bad json"}';
+	if ($data->{id} !~ /^\d+$/ or $db->exists_visit($data->{id})) {
+		return 400,'{"error":"bad id"}';
 	}
-	return \%rv;
+	if (!$db->exists_user($data->{user})) {
+		return 400,'{"error":"bad user"}';
+	}
+	if (!$db->exists_location($data->{location})) {
+		return 400,'{"error":"bad location"}';
+	}
+	$data->{mark} =~ /^[0-5]$/ or return 400,'{"error":"bad mark"}';
+	$data->{visited_at} =~ /^\d+$/ or return 400,'{"error":"bad visited_at"}';
+	AE::postpone {
+		$db->add_visit(@{$data}{qw(id user location mark visited_at)});
+	};
+	return 200,'{}';
 }
 
 use AnyEvent::Socket;
@@ -765,7 +504,7 @@ my $prev = $cnt;
 my $last_ac = 'same';
 
 sub mystat {
-	return $JSON->encode(\%STAT);
+	# return $JSON->encode(\%STAT);
     my ($vsize,$rss) = (0,0);
     eval {
             my $stat = do { open my $f,'<:raw',"/proc/$$/stat" or die $!; local $/; <$f> };
@@ -780,159 +519,58 @@ sub mystat {
 
 my $CONNS = my $REQS = 0;
 
-my $g;$g = EV::timer 0,10, sub {
-	if ($prev == $cnt) {
-		# warn "Same";
-		if ($last_ac eq 'grow') {
-			# warn "Stopped";
-			warn sprintf "END[$CONNS:$REQS]; Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
-			$prev = $cnt = $max = $sum = 0;
-			$min = 1e10;
-		}
-		$last_ac = 'same';
-	}
-	else {
-		# if ($last_ac eq 'same') {
-		# 	warn "Start\n";
-		# }
-		warn sprintf "Grow[$CONNS:$REQS]: %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
-		$prev = $cnt;
-		$last_ac = 'grow';
-	}
+sub do_stat {
+	sprintf "[$CONNS:$REQS] %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n",
+		$cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+}
+
+# my $g;$g = EV::timer 0,10, sub {
+# 	if ($prev == $cnt) {
+# 		# warn "Same";
+# 		if ($last_ac eq 'grow') {
+# 			# warn "Stopped";
+# 			warn sprintf "END[$CONNS:$REQS]; Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+# 			$prev = $cnt = $max = $sum = 0;
+# 			$min = 1e10;
+# 		}
+# 		$last_ac = 'same';
+# 	}
+# 	else {
+# 		# if ($last_ac eq 'same') {
+# 		# 	warn "Start\n";
+# 		# }
+# 		warn sprintf "Grow[$CONNS:$REQS]: %+d, Cnt: %d; Min: %0.4fms; Max: %0.4fms; Avg: %0.4fms [%s]\n", $cnt-$prev, $cnt, $min*1000, $max*1000, eval{$sum*1000/$cnt}, mystat();
+# 		$prev = $cnt;
+# 		$last_ac = 'grow';
+# 	}
+# };
+my $s = EV::signal TERM => sub {
+	warn "Stop";
+	EV::unloop;
 };
-
-tcp_server 0, $port, sub {
-	my $fh = shift;
-	# AnyEvent::Util::fh_nonblocking($fh,1);
-	++$CONNS;
-	setsockopt($fh,SOL_SOCKET, SO_LINGER, "\0\0\0\0");
-	binmode ($fh, ':raw');
-	my $rbuf;
-	my $cl;
-	my $rw;
-	my ($m,$cap,$met,$path_query,$path,$qr);
-	my $start = time;
-	my $read_time;
-	my $read_count = 0;
-	my $reply = sub {
-		my ($st,$b) = @_;
-		my $run = time - $start;
-		my $N = $NAMES{ 0+$m } // 'OTH';
-		$STAT{'C'.$N}++;
-		$STAT{'R'.$N}+= $run;
-
-		$min = min($min,$run);
-		$max = max($max,$run);
-		$sum += $run;
-		$cnt++;
-		if ( $run > 0.5 ) {
-			warn sprintf "[%s:%s] %s %s %s %0.4fs (%0.4fs,%s) [%s]\n",$CONNS, $REQS, $met,$path_query,$st,$run,$read_time,$read_count, $JSONN->encode($rbuf);
-		}
-		warn "$met $path $st: $b\n" if DEBUG > 1; # or $cap && $cap->{id} == 123;
-		my $wbuf = "HTTP/1.1 $st XXX\015\012Server: Perl/5\015\012Connection: close\015\012Content-Length: ".
-			length($b)."\015\012\015\012".$b;
-		my $wr = syswrite($fh,$wbuf);
-		if ($wr == length $wbuf) {
-
-		}
-		else {
-			warn "Write failed: $!\n";
-		}
-		close $fh;
-		undef $rw;
-		--$CONNS;
-		--$REQS;
-	};
-	$rw = AE::io $fh,0, sub {
-		my $r = sysread($fh, $rbuf, 256*1024, length $rbuf);
-		$read_count++;
-		if ($r) {
-			($met,$path_query) = $rbuf =~ m{^([^ ]+)\s+([^ ]+)\s+[^\012]*\012}gc or return;
-			($path,$qr) = split '\?', $path_query, 2;
-			if ($met eq 'GET') {
-				$read_time = time - $start;
-				($m,$cap) = $GET->match($path);
-				++$REQS;
-				$m or return $reply->(404, '{"error":"path"}');
-				my $query = decode_query($qr);
-				$m->( $reply, $cap->{id}, $query );
-			}
-			elsif ($met eq 'POST') {
-				($m,$cap) = $POST->match($path);
-				$m or return ++$REQS, $reply->(404, '{"error":"path"}');
-				if( ($cl) = $rbuf =~ /Content-Length:\s*(\d+)/gci ) { $rbuf =~ m{\015\012\015\012}gc or return; }
-				elsif ($rbuf =~ m{\015\012\015\012}gc) {
-					# $cl = 0;
-					++$REQS;
-					return $reply->(400, '{"error":"empty post"}');
-				}
-				else {return;}
-				my $end = pos $rbuf;
-				# my $end = index($rbuf,"\015\012\015\012", pos $rbuf);
-				# return if $end == -1;
-				return if length($rbuf) < $end + $cl;
-				$read_time = time - $start;
-				# p $rbuf;
-				# warn length($rbuf), " ", $end ," ", $cl;
-				# use Data::Dumper;
-				# warn Dumper [$rbuf] if $rbuf =~ /:\s*123b/;
-				my $data;
-				# p $rbuf;
-				# p substr($rbuf,$end);
-				# p substr($rbuf,$end,$cl);
-				++$REQS;
-				eval {
-					$data = $JSON->decode(substr($rbuf,$end,$cl));
-				1} or do {
-					# if ($cap->{id} == 123) {
-						# warn "Bad: '".substr($rbuf,$end,$cl)."'\n";
-					# }
-					return $reply->(400, '{"error":"bad json"}');
-				};
-				my $query = decode_query($qr);
-				$m->( $reply, $cap->{id}, $query, $data );
-			}
-			else {
-				++$REQS;
-				$reply->(503, "{}");
-			}
-			return;
-		}
-		elsif (defined $r) {
-			++$REQS;
-			$reply->(501, "{}");
-		}
-		elsif ($! == Errno::EAGAIN) {
-			return;
-		}
-		else {
-			undef $rw;
-			close $fh;
-			--$CONNS;
-			return;
-		}
-	};
-}, sub {
-	my $fh = shift;
-	# TCP_DEFER_ACCEPT?
-	setsockopt($fh, IPPROTO_TCP, TCP_NODELAY, 1)
-		or warn "setsockopt TCP_NODELAY: $!";
-	if (defined &TCP_FASTOPEN) {
-		setsockopt($fh, IPPROTO_TCP, TCP_FASTOPEN(), 10)
-			or warn "setsockopt TCP_FASTOPEN: $!";
-	}
-	if (defined &TCP_QUICKACK) {
-		setsockopt($fh, IPPROTO_TCP, TCP_QUICKACK(), 1)
-			or warn "setsockopt TCP_QUICKACK: $!";
-	}
-	if (defined &TCP_LINGER2) {
-		setsockopt($fh, IPPROTO_TCP, TCP_LINGER2(), 0)
-			or warn "setsockopt TCP_LINGER2: $!";
-	}
+DB::enable_profile() if defined &DB::enable_profile;
 
 
-	1024
-};
+my $server = Local::HTTPServer->new("0.0.0.0",$port, [
+	sub { return 501,"Fuck off"; },
+	\&create_user,
+	\&Local::HLCup::get_user_visits_rv,
+	\&Local::HLCup::get_user_rv,
+	\&update_user,
+
+	\&create_location,
+	\&get_location_avg,
+	\&get_location_visits,
+	\&Local::HLCup::get_location_rv,
+	\&update_location,
+
+	\&create_visit,
+	\&Local::HLCup::get_visit_rv,
+	\&update_visit,
+]);
+
+$server->listen();
+$server->accept();
 
 my $s = EV::signal TERM => sub {
 	warn "Stop";

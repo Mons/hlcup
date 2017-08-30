@@ -36,9 +36,15 @@ RUN echo -ne "PORTDIR_OVERLAY=/var/lib/layman/perl-experimental\n" >> /etc/porta
 # RUN echo -ne "=dev-perl/Time-Moment-0.420.0 ~amd64\n" >> /etc/portage/package.accept_keywords
 # RUN emerge JSON-XS AnyEvent Time-Moment Digest-SHA1 dev-perl/EV dev-perl/Data-Printer
 
+RUN emerge libstdc++
+
 RUN wget -O - https://cpanmin.us | /usr/local/bin/perl - App::cpanminus
 # Install deps
-RUN /usr/local/bin/cpanm -n JSON::XS EV AnyEvent Digest::SHA1 Time::Moment Router::R3 URI::XSEscape DDP && rm -rf /root/.cpanm
+RUN /usr/local/bin/cpanm -n JSON::XS EV AnyEvent Digest::SHA1 Time::Moment DDP && rm -rf /root/.cpanm
+
+COPY Local-HLCup-0.01.tar.gz /tmp
+COPY Local-HTTPServer-0.01.tar.gz /tmp
+RUN /usr/local/bin/cpanm -nv /tmp/Local-HLCup-0.01.tar.gz /tmp/Local-HTTPServer-0.01.tar.gz && rm -rf /root/.cpanm
 
 # Clean all deps leftovers
 RUN emerge -C dev-vcs/git ragel && emerge --depclean
