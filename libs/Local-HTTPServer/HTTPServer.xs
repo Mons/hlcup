@@ -18,6 +18,9 @@
 
 #include "picohttpparser.h"
 
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+
 // #include <netdb.h>
 // #include <stdio.h>
 // #include <string.h>
@@ -32,7 +35,7 @@ typedef struct HTS {
 	SV * host;
 	int  port;
 
-	SV *cb;
+	AV *cbs;
 	HV *cnnstash;
 } HTS;
 
@@ -42,7 +45,7 @@ typedef struct HTSCnn {
 	struct ev_loop * loop;
 	int      fd;
 	SV     * self;
-	SV     * cb;
+	AV     * cbs;
 	char     rbuf[32768];
 	int      ruse;
 	struct   phr_header headers[100];
@@ -227,7 +230,7 @@ static void send_reply( HTSCnn * self, int status, char * body, size_t body_size
 		"HTTP/1.1 %03d X\015\012"
 		"Server: Perl/5\015\012"
 		"Connection: %s\015\012"
-		"Content-Length: %u\015\012\015\012%-.*s",
+		"Content-Length: %u\015\012\015\012%-.*s\015\012",
 		status,
 		close ? "close" : "keep-alive",
 		body_size,
@@ -243,6 +246,169 @@ static void send_reply( HTSCnn * self, int status, char * body, size_t body_size
 	}
 	else {
 		ev_io_start( self->loop, &self->rw );
+	}
+}
+
+static char int_table[256] =
+/*    0    1    2    3    4    5    6    7    8    9    a    b    c    d    e    f */
+{
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 0:  0 ~  15 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 1:  16 ~  31 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 2:  32 ~  47 */
+      0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  -1,  -1,  -1,  -1,  -1,  -1,  /* 3:  48 ~  63 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 4:  64 ~  79 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 5:  80 ~  95 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 6:  96 ~ 111 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 7: 112 ~ 127 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 8: 128 ~ 143 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* 9: 144 ~ 159 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* a: 160 ~ 175 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* b: 176 ~ 191 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* c: 192 ~ -17 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* d: -18 ~ 223 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* e: 224 ~ 239 */
+     -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  -1,  /* f: 240 ~ 255 */
+};
+
+/*
+		// int id = strtol(p,&p,10);
+		// if (id == 0) {
+		// 	if (memcmp(p,"new",3) == 0) {
+		// 		return 3;
+		// 	}
+		// 	else {
+		// 		return -1;
+		// 	}
+		// }
+		// else {
+		// 	if (p < e) {
+		// 		if (memcmp(p,"/visits",7) == 0) {
+		// 			return 1;
+		// 		}
+		// 		else {
+		// 			return -1;
+		// 		}
+		// 	}
+		// 	else {
+		// 		return 2;
+		// 	}
+		// }
+*/
+
+int pathmatch(int is_post, register char *p, STRLEN l, int * p_id) {
+	char *e = p+l;
+	if (memcmp(p,"/users/",7) == 0) {
+		p += 7;
+
+		int id = 0;
+		do {
+			if (int_table[*p] > -1) {
+				id = id * 10 + int_table[*p];
+			}
+			else if (*p == '/') {
+				break;
+			}
+			else if (is_post && memcmp(p,"new",3) == 0 && id == 0 && p+3 == e) {
+				return 1; // POST /users/new
+			}
+			else {
+				return -1;
+			}
+			p++;
+		} while (p < e);
+		*p_id = id;
+
+		if (p < e) {
+			if (memcmp(p,"/visits",7) == 0 && p+7 == e && !is_post) {
+				return 2; // GET /users/:id/visits
+			}
+			else {
+				return -1;
+			}
+		}
+		else {
+			if (likely(!is_post)) {
+				return 3; // GET /users/:id
+			}
+			else {
+				return 4; // POST /users/:id
+			}
+		}
+	}
+	else if(memcmp(p,"/locations/",11) == 0) {
+		p += 11;
+		int id = 0;
+		do {
+			if (int_table[*p] > -1) {
+				id = id * 10 + int_table[*p];
+			}
+			else if (*p == '/') {
+				break;
+			}
+			else if (memcmp(p,"new",3) == 0 && id == 0 && p+3 == e && is_post) {
+				return 5; // /locations/new
+			}
+			else {
+				return -1;
+			}
+			p++;
+		} while (p < e);
+		*p_id = id;
+		
+		if (p < e) {
+			if (memcmp(p,"/avg",4) == 0  && p+4 == e && !is_post) {
+				return 6; // /locations/:id/avg
+			}
+			else if (memcmp(p,"/visits",7) == 0 && p+7 == e && !is_post) {
+				return 7; // /location/:id/visits
+			}
+			else {
+				return -1;
+			}
+		}
+		else {
+			if (likely(!is_post)) {
+				return 8; // GET /location/:id
+			}
+			else {
+				return 9; // POST /location/:id
+			}
+		}
+	}
+	else if(memcmp(p,"/visits/",8) == 0) {
+		p += 8;
+		int id = 0;
+		do {
+			if (int_table[*p] > -1) {
+				id = id * 10 + int_table[*p];
+			}
+			else if (*p == '/') {
+				break;
+			}
+			else if (memcmp(p,"new",3) == 0 && id == 0 && p+3 == e && is_post) {
+				return 10; // POST /visits/new
+			}
+			else {
+				return -1;
+			}
+			p++;
+		} while (p < e);
+		*p_id = id;
+		
+		if (p < e) {
+			return -1;
+		}
+		else {
+			if (likely(!is_post)) {
+				return 11; // GET /visits/:id
+			}
+			else {
+				return 12; // POST /visits/:id
+			}
+		}
+	}
+	else {
+		return -1;
 	}
 }
 
@@ -308,6 +474,34 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 				ev_io_start( loop, w );
 				return; // want more
 			}
+			path_len = find_ch(path, path_len, '#');
+			question_at = find_ch(path, path_len, '?');
+
+			int cbx = -1;
+			int id = 0;
+			if (memcmp(method,"GET",method_len) == 0) {
+				cbx = pathmatch(0, path, question_at, &id);
+
+			}
+			else if (memcmp(method,"POST",method_len) == 0) {
+				cbx = pathmatch(1, path, question_at, &id);
+			}
+			else {
+				self->ruse -= pret + content_length;
+				if (self->ruse > 0)
+					memmove(self->rbuf,self->rbuf+pret+content_length,self->ruse);
+				send_reply(self,405,"{}\n",strlen("{}\n"),0);
+				return;
+			}
+			if (unlikely(cbx < 0)) {
+				self->ruse -= pret + content_length;
+				if (self->ruse > 0)
+					memmove(self->rbuf,self->rbuf+pret+content_length,self->ruse);
+				send_reply(self,404,"{}\n",strlen("{}\n"),0);
+				return;
+			}
+			// warn("method = %d",cbx);
+			SV *cb = *av_fetch(self->cbs,cbx,0);
 
 			dSP;
 			ENTER;SAVETMPS;
@@ -324,8 +518,6 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 			assert(self->ruse < 0);
 
 			SV *sv_met = sv_2mortal(newSVpvn(method, method_len));
-			path_len = find_ch(path, path_len, '#');
-			question_at = find_ch(path, path_len, '?');
 			SV *sv_path = sv_2mortal(url_decode(path,question_at));
 			// sv_dump(sv_path);
 			SV *sv_query;
@@ -341,15 +533,14 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 				memmove(self->rbuf,self->rbuf+pret+content_length,self->ruse);
 
 			PUSHMARK(SP);
-			EXTEND(SP, 4);
-			PUSHs( sv_met );
-			PUSHs( sv_path );
+			EXTEND(SP, 3);
+			PUSHs( sv_2mortal(newSViv(id)) );
 			PUSHs( sv_query );
 			PUSHs( sv_body );
 			// PUSHs( sv_2mortal(newSVpvf("Request timed out")) );
 			PUTBACK;
 			
-			int rv_cnt = call_sv( self->cb, G_ARRAY );
+			int rv_cnt = call_sv( cb, G_ARRAY );
 			
 			SPAGAIN;
 
@@ -372,7 +563,8 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 				// sv_dump(rv_status);
 				// sv_dump(rv_body);
 				size_t rv_len;
-				send_reply(self, SvIV(rv_status), SvPV_nolen(rv_body), SvCUR(rv_body), rv_close);
+				char *ret_body = SvPV(rv_body, rv_len);
+				send_reply(self, SvIV(rv_status), ret_body, rv_len, rv_close);
 			}
 			END:
 			PUTBACK;
@@ -381,6 +573,7 @@ static void on_cnn_read( struct ev_loop *loop, ev_io *w, int revents ) {
 		}
 		else if (pret == -1) {
 			// close;
+			warn("bad req: %s", self->rbuf);
 			send_reply(self, 400, "Malformed\n", strlen("Malformed\n"), 1);
 		}
 		else if (pret == -2) {
@@ -435,7 +628,7 @@ static void on_accept_io( struct ev_loop *loop, ev_io *w, int revents ) {
 		// warn("Created connection %p", cnn);
 		// cnn->self = sv_bless(newRV_noinc(newSViv(PTR2IV( self ))), self->cnnstash);
 		cnn->fd = newfd;
-		cnn->cb = self->cb;
+		cnn->cbs = self->cbs;
 		cnn->loop = self->loop;
 
 		ev_io_init( &cnn->rw, on_cnn_read, cnn->fd, EV_READ );
@@ -453,13 +646,13 @@ BOOT:
 	I_EV_API ("Local::HTTPServer");
 }
 
-void new(SV *, SV  * host, int port, SV *cb)
+void new(SV *, SV  * host, int port, AV *cbs)
 	PPCODE:
 		HTS * self = (HTS *) safemalloc( sizeof(HTS) );
 		memset(self, 0, sizeof(HTS));
 		ST(0) = sv_2mortal(sv_bless(newRV_noinc(newSViv(PTR2IV( self ))), gv_stashpv(SvPV_nolen(ST(0)), TRUE)));
 		self->host = SvREFCNT_inc(host);
-		self->cb = SvREFCNT_inc(cb);
+		self->cbs = SvREFCNT_inc(cbs);
 		self->port = port;
 		self->cnnstash = gv_stashpv("Local::HTTPServer:Cnn", TRUE);
 
@@ -521,3 +714,17 @@ void accept(SV *)
 
 		XSRETURN_UNDEF;
 
+
+void match(SV *, int is_post, SV *path)
+	PPCODE:
+		STRLEN l;
+		char *p = SvPVbyte(path,l);
+		int id;
+		int r = pathmatch(is_post, p,l, &id);
+		if (r > -1) {
+			ST(0) = sv_2mortal(newSViv(r));
+			XSRETURN(1);
+		}
+		else {
+			XSRETURN_UNDEF;
+		}

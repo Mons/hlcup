@@ -40,8 +40,11 @@ RUN emerge libstdc++
 
 RUN wget -O - https://cpanmin.us | /usr/local/bin/perl - App::cpanminus
 # Install deps
+RUN /usr/local/bin/cpanm -n JSON::XS EV AnyEvent Digest::SHA1 Time::Moment DDP && rm -rf /root/.cpanm
+
 COPY Local-HLCup-0.01.tar.gz /tmp
-RUN /usr/local/bin/cpanm -n JSON::XS EV AnyEvent Digest::SHA1 Time::Moment Router::R3 URI::XSEscape HTTP::Parser::XS DDP /tmp/Local-HLCup-0.01.tar.gz && rm -rf /root/.cpanm
+COPY Local-HTTPServer-0.01.tar.gz /tmp
+RUN /usr/local/bin/cpanm -nv /tmp/Local-HLCup-0.01.tar.gz /tmp/Local-HTTPServer-0.01.tar.gz && rm -rf /root/.cpanm
 
 # Clean all deps leftovers
 RUN emerge -C dev-vcs/git ragel && emerge --depclean
