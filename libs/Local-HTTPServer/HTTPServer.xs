@@ -48,7 +48,7 @@ typedef struct HTSCnn {
 	AV     * cbs;
 	char     rbuf[32768];
 	int      ruse;
-	struct   phr_header headers[100];
+	struct   phr_header headers[20];
 	char     wbuf[32768];
 } HTSCnn;
 
@@ -230,14 +230,17 @@ static void send_reply( HTSCnn * self, int status, char * body, size_t body_size
 		"HTTP/1.1 %03d X\015\012"
 		"Server: Perl/5\015\012"
 		"Connection: %s\015\012"
-		"Content-Length: %u\015\012\015\012%-.*s\015\012",
+		"Content-Length: %u\015\012\015\012%-.*s",
 		status,
 		close ? "close" : "keep-alive",
 		body_size,
 		body_size,body
 	);
 	// warn("%s",self->wbuf);
-	int written = write(self->fd,self->wbuf, size);
+	// int written = write(self->fd,self->wbuf, size);
+	// int written = send(self->fd,self->wbuf, size, MSG_OOB|MSG_DONTROUTE);
+	int written = send(self->fd,self->wbuf, size, MSG_DONTROUTE);
+	// int written = send(self->fd,self->wbuf, size, MSG_OOB);
 	if (written < size) {
 		warn("Write failed: %d of %d", written, size);
 	}
