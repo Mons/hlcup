@@ -1,1 +1,2 @@
 libs/*/*.xs linguist-vendored
+libs/*/ppport.h linguist-vendored
