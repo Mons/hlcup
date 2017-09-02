@@ -2,6 +2,7 @@
 <<'SKIP';
 #endif
 /*
+
 ----------------------------------------------------------------------
 
     ppport.h -- Perl/Pollution/Portability Version 3.35
