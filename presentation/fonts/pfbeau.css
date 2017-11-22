@@ -1,0 +1,41 @@
+@font-face{
+    font-family: "PFBeauSansPro-SeBold";
+    src: url("pfbeausanspro-sebold.eot");
+    src: url("pfbeausanspro-sebold.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-sebold.woff") format("woff"),url("pfbeausanspro-sebold.ttf") format("truetype");
+    font-weight: normal;
+    font-style:normal;
+}
+@font-face{
+    font-family: "PFBeauSansPro-Thin";
+    src: url("pfbeausanspro-thin.eot");
+    src: url("pfbeausanspro-thin.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-thin.woff") format("woff"),url("pfbeausanspro-thin.ttf") format("truetype");
+    font-weight: normal;
+    font-style:normal;
+}
+@font-face{
+    font-family: "PFBeauSansPro-ThinItal";
+    src: url("pfbeausanspro-thinital.eot");
+    src: url("pfbeausanspro-thinital.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-thinital.woff") format("woff"),url("pfbeausanspro-thinital.ttf") format("truetype");
+    font-weight: normal;
+    font-style:normal;
+}
+@font-face{
+    font-family: "PFBeauSansPro-Book";
+    src: url("pfbeausanspro-book.eot");
+    src: url("pfbeausanspro-book.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-book.woff") format("woff"),url("pfbeausanspro-book.ttf") format("truetype");
+    font-weight: normal;
+    font-style:normal;
+}
+@font-face{
+    font-family: "PFBeauSansPro-LightItal";
+    src: url("pfbeausanspro-lightital.eot");
+    src: url("pfbeausanspro-lightital.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-lightital.woff") format("woff"),url("pfbeausanspro-lightital.ttf") format("truetype");
+    font-weight: normal;
+    font-style:normal;
+}
+@font-face{
+    font-family: "PFBeauSansPro-Reg";
+    src: url("pfbeausanspro-reg.eot");
+    src: url("pfbeausanspro-reg.eot?#iefix") format("embedded-opentype"),url("pfbeausanspro-reg.woff") format("woff"),url("pfbeausanspro-reg.ttf") format("truetype"); font-weight: normal;
+    font-style:normal;
+}

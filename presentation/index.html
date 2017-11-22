@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>В топ Highload Cup на Perl</title>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+	<link rel="stylesheet" type="text/css" href="fonts/pfbeau.css" />
+	<link rel="stylesheet" type="text/css" href="fonts/ptm55f.css" />
+	<style type="text/css">
+		.firstpage, .lastpage {
+			vertical-align: middle;
+			text-align: right;
+		}
+				
+		h1, h2, h3 {
+			font-family: "PFBeauSansPro-SeBold", 'Arial';
+			/*color: #4BA6C1;*/
+		}
+
+		h1 code.remark-inline-code, h2 code.remark-inline-code, h3 code.remark-inline-code {
+			font-size: inherit !important;
+			margin: 0 0.2em !important;
+		}
+
+		.remark-slide-content {
+			font-family: "PFBeauSansPro", 'Arial';
+			line-height: 1.4em;
+			font-size: 32px;
+
+			background: #272822;
+			/*color: #777872;*/
+			color: #e2e2e2;
+			text-shadow: 0 0 20px #333;
+
+			padding-left: 45px;
+			padding-right: 32px;
+
+			background-image: url('moscow.png');
+			background-repeat: no-repeat;;
+			/*background-position: bottom right;*/
+			background-position: right 530px;
+			overflow: hidden;
+		}
+
+		.remark-slide-content.start {
+			/*background-image: url('moscow-med.png');*/
+			background-image: none;
+			background-repeat: no-repeat;;
+			background-position: bottom right;
+		}
+		.start .remark-slide-number {
+			display: none;
+		}
+
+		.remark-slide {
+			max-height:681px;
+			overflow: hidden;
+		}
+
+		.remark-code, .remark-inline-code {
+			font-family: 'PTM55F', 'Ubuntu Mono';
+			font-size: 24px;
+			line-height: 1.15em;
+		}
+
+		.remark-code-span-highlighted {
+			margin-left: -2px !important;
+			margin-right: -2px !important;
+		}
+
+		.clear {
+			clear: both;
+		}
+
+		.center-aligned {
+			text-align: center;
+			font-size: 36pt;
+		}
+	
+
+		.remark-slide-number {
+			font-size: 20px;
+			right: 180px;
+		}
+	
+		.remark-slide-content strong {
+			font-family: "HelveticaNeueCyrBold";
+		}
+ 
+		.remark-code-line-highlighted, .remark-code-span-highlighted {
+			background-color: rgba(180, 0, 0, 0.5)
+		}
+
+		/*.remark-slide-content h1 { font-size: 2em; }*/
+		.remark-slide-content h2 { font-size: 1.2em; }
+		/*.remark-slide-content h3 { font-size: 1em; }*/
+
+		.remark-inline-code {
+			/*background-color: #e2e2e2;*/
+			padding-left: 0.05em;
+			padding-right: 0.05em;
+			margin-left: -0.05em;
+			margin-right: -0.05em;
+		}
+	
+		.red {
+			color: #FF4444;
+		}
+		.green {
+			color: #44FF44;
+		}
+	
+		.note {
+			display:block;
+			font-size: 18px;
+		}
+
+		.wide-image img {
+			min-width: 100%;
+			max-width: 100%;
+			height: auto;
+			/*width: 100%;*/
+		}
+		.tall-image img {
+			/*height: 100%;*/
+			min-height: 100%;
+			max-height: 100%;
+			width: auto;
+			/*max-width: 10%;
+			max-height: 10%;
+			transform: scale(10);*/
+		}
+		.tall-image-70 img {
+			/*height: 100%;*/
+			min-height: 70%;
+			width: auto;
+			/*max-width: 10%;
+			max-height: 10%;
+			transform: scale(10);*/
+		}
+
+		.normal img {
+			width: initial;
+		}
+
+		.hljs .hljs-comment {
+			font-style: normal !important;
+		}
+
+		.hljs-agate .hljs {
+			background-color: rgba(60,60,80,0.4);
+		}
+
+		.footer {
+			position: absolute;
+			bottom: 12px;
+			left: 128px;
+			font-size: 24px;
+		}
+		.left {
+			clear:both;
+			float: left;
+			width: 49%;
+		}
+
+		.right {
+			float: right;
+			text-align: left;
+			width: 49%;
+		}
+		.right * { text-align: left;}
+		.right ~ p { clear: both; }
+		.right:after {
+			content: "";
+			display: table;
+			clear: both;
+		}
+
+		.f-right {
+			float: right;
+		}
+
+		.left:after {
+			content: "";
+			display: table;
+			clear: both;
+		}
+
+		.w70 {
+			width: 69%;
+		}
+		.w50 {
+			width: 49%;
+		}
+		.w30 {
+			width: 29%;
+		}
+		.h30 {height: 30%;}
+		.h50 {height: 50%;}
+		.h70 {height: 70%;}
+
+		.h100 {
+			height: 100%;
+			max-height: 100%;
+		}
+		.clear {
+			content: "";
+			display: table;
+			clear:both;
+		}
+		.left *:first-of-type{
+			margin-top:0;
+		}
+		.right *:first-of-type{
+			margin-top:0;
+		}
+
+		
+		.huge {
+			font-size: 80px;
+			font-family: 'Apple Color Emoji';
+		}
+
+		@page {
+    		size: 1210px 681px;
+			margin: 0;
+		}
+
+		@media print {
+			.remark-slide-scaler {
+				width: 100% !important;
+				height: 100% !important;
+				transform: scale(1) !important;
+				top: 0 !important;
+				left: 0 !important;
+			}
+		}
+
+		/***************************/
+
+		li {
+			margin-bottom: 0.3em;
+		}
+
+		.h400px img {
+			height: 400px;
+		}
+		.h450px img {
+			height: 450px;
+		}
+		.float-right {
+			float: right;
+		}
+		.low-padding {
+			padding: 10px;
+		}
+		.low-padding pre {
+			margin: 0;
+		}
+
+		a:link, a:visited {
+			color: #9999FF;
+		}
+
+		.title1 {
+			background-image: url('zastavka_perl_01.jpg');
+			background-size: cover !important;
+		}
+		.title2 {
+			background-image: url('perl_1920x1080.jpg');
+			background-size: cover !important;
+		}
+
+		.mail-ru {
+			position: absolute;
+			bottom: 2px;
+			/*left: 48px;*/
+			left: 135px;
+			/*top: 320px;*/
+			/*right: 115px;*/
+			background-color: #168de2;
+			padding: 4px;
+		}
+		.mail-ru img {
+			height: 43px;
+			margin: 3px 6px -5px 6px;
+		}
+
+		.it-mail-ru {
+			position: absolute;
+			bottom: 5px;
+			left: 290px;
+		}
+		.it-mail-ru img {
+			width: 47px;
+			height: 43px;
+		}
+		.it-mail-ru .text {
+			font-family: "Helvetica", sans-serif;
+			font-weight: 700;
+			font-size: 17px;
+			display: inline-block;
+			line-height: 43px;
+			vertical-align: top;
+			margin-left: 4px;
+		}
+		.hotbox {
+			position: absolute;
+			bottom: 9px;
+			left: 455px;
+		}
+		.hotbox img {
+			height: 38px;
+		}
+
+		.msk {
+			position: absolute;
+			right: 100px;
+			top: 320px;
+		}
+
+		.raptor-num {
+			position: absolute;
+			/*top: 350px;*/
+			top: -20px;
+			right: 5px;
+		}
+		.raptor-num img {
+			width: 200px;
+		}
+
+		.start h1 {
+			font-size: 80px;
+		}
+		.start h2 {
+			font-size: 60px;
+		}
+
+		.start .narrow {
+			width:87%;
+			margin: 100px auto;
+			position: relative;
+		}
+
+		.start h4 {
+			position: absolute;
+			bottom: 70px;
+			left: 135px;
+			font-weight: normal;
+			font-style: italic;
+		}
+
+		img[alt="hlcuplogo"] {
+			width: 600px;
+		}
+		img[alt="schema"] {
+			width: 100%;
+		}
+
+		img[alt="load"] {
+			position: absolute;
+			right: 100px;
+			top: 220px;
+		}
+
+		.sidepic {
+			position: absolute;
+			right: 50px;
+			top: 50px;
+			bottom: 150px;
+		}
+		.sidepic img {
+			height: 100%;
+		}
+		.big-code .remark-code {
+			font-size: 32px;
+		}
+		.big-code pre, .pre-no-margin pre {
+			margin-top: 0;
+		}
+		img[alt="docker"] {
+			height: 80%;
+		}
+		img[alt="gentoo"] {
+			position: absolute;
+			right: 50px;
+			top: 100px;
+			width: 150px;
+		}
+		img[alt="tooslow"] {
+			height: 360px;
+		}
+
+
+
+	</style>
+</head>
+<body>
+	<script src="remark-latest.min.js" type="text/javascript"></script>
+	<script src="jquery.min.js" type="text/javascript"></script>
+	<script type="text/javascript">
+		$(document).ready(function(){
+			var slideshow = remark.create({
+				sourceUrl: 'slides.md',
+				// highlightStyle: 'github',
+				ratio: '16:9',
+				highlightStyle: 'agate',
+				highlightLines: true,
+				highlightSpans: true,
+			});
+			$('img').each(function(){$(this).attr('src', path + $(this).attr('src'))});
+		});
+	</script>
+</body>
+</html>

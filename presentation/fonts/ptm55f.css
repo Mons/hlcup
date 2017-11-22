@@ -1,0 +1,9 @@
+@font-face {
+	font-family: 'PTM55F';
+	src: url('PTM55F.eot');
+	src: url('PTM55F.eot') format('embedded-opentype'),
+	url('PTM55F.woff2') format('woff2'),
+	url('PTM55F.woff') format('woff'),
+	url('PTM55F.ttf') format('truetype'),
+	url('PTM55F.svg#PTM55F') format('svg');
+}
